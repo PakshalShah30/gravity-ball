@@ -1,15 +1,48 @@
 # GRAVITY BALL
 
-A juiced-up arcade breakout: real gravity on the ball, a gravity-flip super move, chain
-multipliers, screen shake, hitstop, chromatic fringes, procedural explosions and a
-procedurally synthesized soundtrack.
+**A neon arcade breakout where the ball has weight — and you can flip gravity to slam
+everything into the ceiling.**
 
-**Zero dependencies. No build step. No asset files.** Three static files and a canvas.
+Chain multipliers, power-ups, screen shake, hitstop, particle explosions and a synthesized
+soundtrack. **Zero dependencies · no build step · no asset files.** Just static files and
+a canvas.
 
+![Gravity Ball — a bomb chain reaction mid gravity-flip](docs/screenshot-juice.png)
+
+## Play it in 30 seconds
+
+```bash
+git clone https://github.com/PakshalShah30/gravity-ball.git
+cd gravity-ball
+npm start
 ```
-npm start          # serve on http://localhost:8080
-npm test           # syntax check + 84 headless gameplay assertions
-```
+
+Open **http://localhost:8080** and move the mouse. That's the whole install.
+
+* There is **nothing to install** — the project has no npm dependencies, so you never run
+  `npm install` and there is no build step. `npm start` simply serves the folder with a
+  tiny built-in server (`tools/serve.mjs`, ~70 lines of Node), because browsers refuse to
+  load ES modules from `file://` links.
+* **No Node? Any static file server works**, because the game is plain static files —
+  `python3 -m http.server 8080`, `npx serve .`, or your editor's "Live Server" extension.
+  Deploy the folder to any static host and it just runs.
+* Double-clicking `index.html` works in Firefox and Safari; some Chrome versions block
+  modules on `file://` and show a blank page — if that happens, use any server above.
+* **Requirements:** any modern browser — Chrome, Edge, Firefox or Safari, desktop or
+  mobile. Node 18+ is needed only for `npm start` and the test suite.
+
+## Controls
+
+| Action | Input |
+|---|---|
+| Move the paddle | Mouse · touch drag · `←` `→` |
+| Launch / flip gravity / start / retry | Click · tap · `Space` |
+| Flip (touch) | the on-screen **GRAVITY** pad — or a tap that isn't a drag |
+| Pause · mute · restart · debug | `P` / `Esc` · `M` · `R` · `F1` |
+| Change the feel preset | `F3` (or the FEEL row on the title screen) |
+
+Desktop is pointer-based (right-click also flips, for keyboard-less play). On touch, a
+*drag* only steers and a *tap* flips, so you never flip by accident while repositioning.
 
 ---
 
@@ -47,7 +80,7 @@ without playing for it.
 
 ---
 
-## The hook
+## How it plays
 
 Breakout, but the ball has weight. It arcs, it hangs, it dives early — you have to *lead*
 your shots instead of watching a straight line bounce around.
@@ -57,21 +90,9 @@ into the ceiling, and **everything it touches takes double damage**. It is a sav
 combo starter and the only way to break the shield bricks, and it recharges in about two
 seconds so you are constantly deciding whether to spend it.
 
-## Controls
+![Mid-flip: the ball slamming into the ceiling while the paddle waits below](docs/screenshot-play.png)
 
-| | |
-|---|---|
-| Move | Mouse · touch drag · `←` `→` |
-| Launch / flip / start / retry | Click · tap · `Space` |
-| Flip (touch) | the on-screen **GRAVITY** pad, or a tap that isn't a drag |
-| Pause · mute · restart · debug | `P` / `Esc` · `M` · `R` · `F1` |
-| Cycle feel preset | `F3` (or the FEEL row on the title screen) |
-
-Desktop is pointer-based (right-click also flips, in case you are playing one-handed and
-hate keyboards). On touch, a *drag* only steers the paddle and a *tap* flips, so you never
-flip by accident while repositioning.
-
-## Rules of the arena
+### Rules of the arena
 
 * Clear every brick to advance. 5 hand-built levels teach the mechanics, then seeded
   procedural layouts take over with mirrored patterns, armoured bricks and more bombs.
@@ -87,41 +108,7 @@ flip by accident while repositioning.
 * No bottom wall. The floor is a shredder; every ball lost is a life. Extra ball every
   20 000 points.
 
-## What makes it feel good (the "juice" checklist)
-
-| Technique | Where |
-|---|---|
-| Screen shake with a **trauma model** (amplitude = trauma², decays over time) | `core/fx.js` |
-| **Hitstop** — the sim freezes for 12–110 ms on impact, scaled by what was hit | `core/fx.js`, `world.js` |
-| **Slow-motion** ramp on gravity flips and deaths | `core/fx.js` |
-| **Squash & stretch** on the ball, paddle and brick pop-in | `world.js`, `paddle.js`, `level.js` |
-| Directional camera **kick** (impacts shove the camera away from the hit) | `fx.shake(amount, dirX, dirY)` |
-| **Additive glow** halos instead of a blur pass — overlapping halos accumulate into real bloom | `render/renderer.js` |
-| Screen **flash**, **chromatic fringes**, scanlines, grain, vignette | `main.js` post-processing |
-| Pooled particles: shrapnel, sparks, shockwaves, smoke, embers, anti-gravity wind | `core/particles.js` |
-| **Procedural audio** — every sound synthesized from oscillators + one noise buffer | `core/audio.js` |
-| Score pop-ups, banner type, wave-animated logo, pips for lives | `render/hud.js` |
-| A **FEEL** preset selector on the title screen, so the tuning is playable rather than argued about | `config.js`, `render/hud.js` |
-| Ball trail, paddle heat trail, animated hazard chevrons that speed up as the ball falls | `world.js`, `bg.js` |
-
-## Physics notes
-
-* **Fixed 1/120 s simulation steps** inside a variable-rate render loop, with a spiral-of-
-  death guard (`config.TIMING.maxFrame`).
-* **Continuous collision detection**: the ball is swept as a circle against AABBs using the
-  Minkowski slab test (`math.sweepCircleBox`). It returns the exact time of impact, so a
-  1400 px/s ball cannot tunnel through a 6 px gap, and it is cheaper than sub-stepping.
-  Brick candidates come from a uniform grid, so a step tests a handful of cells.
-* **Gravity is integrated, but the response is authored**: flips apply a deceleration
-  proportional to current speed (so the move always reads), paddle bounces are reflected
-  *and* aimed, min/max speed clamps are re-applied after every collision, and a watchdog
-  nudges a near-horizontal ball so the game can never deadlock.
-* The paddle uses an **exponential chase** (`1 - e^(-λt)`) rather than a speed, which reads
-  as weight without input lag; its own velocity is added into the bounce ("english"), so
-  flicking the paddle slingshots the ball.
-
-
-## Feel presets
+## Pick a feel: FLOATY · ARCADE · FRANTIC
 
 Game feel is a search problem, so the search space is a runtime setting instead of a
 constant. `F3` (or the **FEEL** row on the title screen) rotates between three tunings, and
@@ -163,6 +150,47 @@ Implementation notes, because the obvious version of this is a bug factory:
   the paddle remembers whether it is wide (`paddle.wide`) instead of inferring it from its
   current width.
 
+## Make it yours
+
+Every tunable number in the game lives in one commented file: **`src/config.js`** — ball
+speed, gravity, paddle width, drop rates, shake amounts, combo timing, the preset tables.
+Change a value, refresh the browser, feel the difference; there is no rebuild step. If you
+invent a tuning you like more than the three built-ins, add it to `PRESETS` and
+`PRESET_ORDER` in that file and it shows up in the FEEL row automatically.
+
+## What makes it feel good (the "juice" checklist)
+
+| Technique | Where |
+|---|---|
+| Screen shake with a **trauma model** (amplitude = trauma², decays over time) | `core/fx.js` |
+| **Hitstop** — the sim freezes for 12–110 ms on impact, scaled by what was hit | `core/fx.js`, `world.js` |
+| **Slow-motion** ramp on gravity flips and deaths | `core/fx.js` |
+| **Squash & stretch** on the ball, paddle and brick pop-in | `world.js`, `paddle.js`, `level.js` |
+| Directional camera **kick** (impacts shove the camera away from the hit) | `fx.shake(amount, dirX, dirY)` |
+| **Additive glow** halos instead of a blur pass — overlapping halos accumulate into real bloom | `render/renderer.js` |
+| Screen **flash**, **chromatic fringes**, scanlines, grain, vignette | `main.js` post-processing |
+| Pooled particles: shrapnel, sparks, shockwaves, smoke, embers, anti-gravity wind | `core/particles.js` |
+| **Procedural audio** — every sound synthesized from oscillators + one noise buffer | `core/audio.js` |
+| Score pop-ups, banner type, wave-animated logo, pips for lives | `render/hud.js` |
+| A **FEEL** preset selector on the title screen, so the tuning is playable rather than argued about | `config.js`, `render/hud.js` |
+| Ball trail, paddle heat trail, animated hazard chevrons that speed up as the ball falls | `world.js`, `bg.js` |
+
+## Physics notes
+
+* **Fixed 1/120 s simulation steps** inside a variable-rate render loop, with a spiral-of-
+  death guard (`config.TIMING.maxFrame`).
+* **Continuous collision detection**: the ball is swept as a circle against AABBs using the
+  Minkowski slab test (`math.sweepCircleBox`). It returns the exact time of impact, so a
+  1400 px/s ball cannot tunnel through a 6 px gap, and it is cheaper than sub-stepping.
+  Brick candidates come from a uniform grid, so a step tests a handful of cells.
+* **Gravity is integrated, but the response is authored**: flips apply a deceleration
+  proportional to current speed (so the move always reads), paddle bounces are reflected
+  *and* aimed, min/max speed clamps are re-applied after every collision, and a watchdog
+  nudges a near-horizontal ball so the game can never deadlock.
+* The paddle uses an **exponential chase** (`1 - e^(-λt)`) rather than a speed, which reads
+  as weight without input lag; its own velocity is added into the bounce ("english"), so
+  flicking the paddle slingshots the ball.
+
 ## Architecture
 
 ```
@@ -184,7 +212,10 @@ src/render/
   renderer.js         virtual-resolution canvas, glow primitives, CRT post-processing
   bg.js               parallax starfield, grid, gravity telegraphs, shredder pit
   hud.js              score band, flip meter, banners, title/clear/game-over/pause screens
-tools/                headless test rig (see below)
+tools/
+  serve.mjs           the zero-dependency static server behind `npm start`
+  lint.mjs, scenarios.mjs, harness.mjs, canvas-mock.mjs   headless test rig (below)
+docs/                 README screenshots (generated from the headless rig)
 ```
 
 The game is authored in a fixed **1000×760 virtual resolution** and letterboxed with DPR
@@ -224,12 +255,22 @@ brick geometry. It also replays **20 seconds of FRANTIC** — the heaviest tunin
 the same escape-and-speed-cap soak, and runs last, since a preset mutates the shared config
 object that every other scenario asserts against.
 
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Blank page when opening `index.html` by double-click | Your browser is blocking ES modules on `file://` — serve the folder instead (`npm start` or any static server) |
+| No sound | Browsers only unlock audio after your first click or keypress; play a moment, and check `M` hasn't muted it |
+| Feels too brutal / too gentle | `F3` cycles FLOATY / ARCADE / FRANTIC; the tuning persists |
+| "Rotate your device" on a narrow window | The arena is wide by design — rotate or widen the window (it stays playable behind the message) |
+
 ## Accessibility & settings
 
 * `prefers-reduced-motion` is respected (shake and flash are damped in `main.js`).
-* `F2` toggles screen shake, `M` mutes; both persist in `localStorage`, as does the best
-  score and the chosen feel preset. The bottom band is a reserved touch strip, so no button ever sits under your
-  finger mid-rally.
+* `F2` toggles screen shake, `M` mutes; both persist in `localStorage`, as do the best
+  score and the chosen feel preset.
+* The bottom band is a reserved touch strip, so no button ever sits under your finger
+  mid-rally.
 * The canvas carries a descriptive `aria-label` and the page has a text summary of the
   controls for screen readers; audio is fully optional and never required to play.
 
