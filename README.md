@@ -13,6 +13,40 @@ npm test           # syntax check + 64 headless gameplay assertions
 
 ---
 
+## How to check it
+
+Three tiers, cheapest first.
+
+**1. Play it.** `npm start`, then open `http://localhost:8080`. There is no build step —
+the browser loads `src/main.js` directly as an ES module. Move with the mouse, press
+`Space` (or right-click) to flip gravity. If you only do one check, do this one: the whole
+point of the project is how it *feels*, and no assertion can tell you that.
+
+**2. Run the test suite.** `npm test` — parses every module, then drives the **real `World`
+instance** through 64 assertions covering bomb chain reactions, shield bricks vs
+anti-gravity, each power-up, combo expiry, extra balls, last-life death, restart, level
+progression, pause, letterbox maths at 2560×1440, drag-vs-tap on touch, the on-screen flip
+pad, and a 90-second physics soak with deliberately erratic steering that asserts the ball
+never leaves the arena and the speed cap holds.
+
+```
+✓ 17 modules parsed cleanly
+64 passed, 0 failed
+```
+
+**3. Watch the autopilot.** `npm run shots` plays ~150 simulated seconds unattended and
+writes screenshots of the key moments to `out/shots/`; `npm run simulate` does the same run
+without writing images. Useful for eyeballing the juice — bombs, flips, level clears —
+without playing for it.
+
+> **Reading the headless screenshots:** the software canvas in `tools/canvas-mock.mjs` has
+> no font rasterizer, so it draws each glyph as a rough blocky "ink" pattern. Text in
+> `out/` PNGs is therefore unreadable — that is the mock, not the game. In a real browser
+> the canvas uses the actual system font and the typography is crisp. Judge layout,
+> colour, glow and particle work from the screenshots; judge text by playing.
+
+---
+
 ## The hook
 
 Breakout, but the ball has weight. It arcs, it hangs, it dives early — you have to *lead*
