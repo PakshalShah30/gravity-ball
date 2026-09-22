@@ -25,6 +25,7 @@ export class Input {
     this.restart = false;
     this.debug = false;
     this.toggleShake = false;
+    this.cyclePreset = false;    // F3: rotate the feel preset
 
     this.axis = 0;        // -1..1 keyboard steering
     this.keys = new Set();
@@ -131,6 +132,9 @@ export class Input {
         case 'KeyR': this.restart = true; break;
         case 'F1': this.debug = true; break;
         case 'F2': this.toggleShake = true; break;
+        // F3 is the browser's "find again" in most engines, so it needs the
+        // preventDefault or cycling presets opens a search bar over the game.
+        case 'F3': this.cyclePreset = true; e.preventDefault(); break;
         case 'ArrowLeft': case 'KeyA': case 'ArrowRight': case 'KeyD': e.preventDefault(); break;
       }
       if (e.code === 'Space') e.preventDefault();
@@ -162,5 +166,6 @@ export class Input {
     this.restart = false;
     this.debug = false;
     this.toggleShake = false;
+    this.cyclePreset = false;
   }
 }

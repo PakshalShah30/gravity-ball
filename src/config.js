@@ -152,3 +152,105 @@ export const COLORS = {
   bombCore: '#ffd166',
   shield: '#7c5cff',
 };
+
+// ---------------------------------------------------------------- presets ---
+/**
+ * Feel presets.
+ *
+ * A preset only ever touches *feel* numbers — never geometry. Brick layout
+ * (GRID), the playfield, the virtual resolution and the ball radius stay put,
+ * because those are level design, and GRID carries derived values
+ * (pitchX/pitchY) computed once at load time. Keeping presets off them means
+ * flipping a preset can never desync the layout from the physics.
+ *
+ * `arcade` is the authored tuning; `floaty` and `frantic` are different reads
+ * of the same rules rather than difficulty levels bolted on afterwards, so the
+ * game never becomes a different game — it becomes a different *feel*.
+ *
+ * Each preset is a partial override applied on top of BASELINE, and applying a
+ * preset restores BASELINE first. That is what makes switching idempotent:
+ * applying `frantic` twice cannot stack, and `floaty -> arcade` fully undoes
+ * `floaty` instead of leaving a residue behind.
+ */
+const BASELINE = {
+  BALL: { ...BALL },
+  PADDLE: { ...PADDLE },
+  FLIP: { ...FLIP },
+  COMBO: { ...COMBO },
+  DROPS: { ...DROPS },
+  JUICE: { ...JUICE },
+};
+
+/** The objects a preset is allowed to mutate, by name (used by applyPreset). */
+const GROUPS = { BALL, PADDLE, FLIP, COMBO, DROPS, JUICE };
+
+export const PRESETS = {
+  floaty: {
+    label: 'FLOATY',
+    blurb: 'slow arcs · wide paddle · generous flip',
+    // Less gravity is the whole identity: the ball hangs, so the player has
+    // time to read the arc and set up chains instead of reacting.
+    overrides: {
+      BALL: { gravity: 300, speed: 520, speedPerLevel: 14, gravityPerLevel: 5, speedMax: 1150, bumpPerHit: 1.008 },
+      PADDLE: { w: 168, wWide: 226, follow: 34, maxAngle: 55, inertia: 0.13 },
+      FLIP: { duration: 1.35, cooldown: 0.85 },
+      COMBO: { timeout: 4.5 },
+      DROPS: { chance: 0.14 },
+      JUICE: { shakeMax: 20, hitstopBrick: 0.018, hitstopBomb: 0.08, aberration: 0.38, bloom: 0.85 },
+    },
+  },
+  arcade: {
+    label: 'ARCADE',
+    blurb: 'the authored tuning',
+    overrides: {},   // empty on purpose: "arcade" means "exactly as configured above"
+  },
+  frantic: {
+    label: 'FRANTIC',
+    blurb: 'heavy ball · narrow paddle · scarce flip',
+    // Heavier gravity makes the ball dive early; a narrower paddle and a longer
+    // flip cooldown mean every save has to be earned. speedMax deliberately
+    // stays at the authored 1420 so continuous collision detection keeps its
+    // guarantee (the cap is a physics constraint, not a difficulty knob).
+    overrides: {
+      BALL: { gravity: 620, speed: 720, speedPerLevel: 32, gravityPerLevel: 14, speedMin: 430, bumpPerHit: 1.02 },
+      PADDLE: { w: 108, wWide: 156, follow: 38, maxAngle: 68 },
+      FLIP: { duration: 0.85, cooldown: 1.45 },
+      COMBO: { timeout: 2.6 },
+      DROPS: { chance: 0.09 },
+      JUICE: { shakeMax: 38, hitstopBrick: 0.026, hitstopBomb: 0.13, aberration: 0.7, bloom: 1.0 },
+    },
+  },
+};
+
+/** Cycle order for the F3 key: calm -> authored -> chaotic -> calm. */
+export const PRESET_ORDER = ['floaty', 'arcade', 'frantic'];
+
+let activePreset = 'arcade';
+
+/** The name of the preset currently applied. */
+export function activePresetName() { return activePreset; }
+
+/** True if `name` is a real preset. */
+export function isPreset(name) {
+  return Object.prototype.hasOwnProperty.call(PRESETS, name);
+}
+
+/**
+ * Restore every tunable to its authored value, then apply one preset.
+ * Returns the preset name, or null if `name` is unknown — in which case the
+ * current tuning is left completely untouched rather than half-applied.
+ */
+export function applyPreset(name) {
+  if (!isPreset(name)) return null;
+  for (const [group, values] of Object.entries(BASELINE)) Object.assign(GROUPS[group], values);
+  for (const [group, values] of Object.entries(PRESETS[name].overrides)) Object.assign(GROUPS[group], values);
+  activePreset = name;
+  return name;
+}
+
+/** Next preset in cycle order (dir of -1 walks backwards). */
+export function nextPresetName(dir = 1) {
+  const i = PRESET_ORDER.indexOf(activePreset);
+  const n = PRESET_ORDER.length;
+  return PRESET_ORDER[(((i + dir) % n) + n) % n];
+}

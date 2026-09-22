@@ -7,7 +7,10 @@
  * the arena is getting punched.
  */
 import { clamp, mixHex, rgba, easeOutCubic, easeOutBack, TAU } from '../core/math.js';
-import { VIEW, HUD_H, FIELD, COLORS, FLIP } from '../config.js';
+import {
+  VIEW, HUD_H, FIELD, COLORS, FLIP,
+  PRESETS, PRESET_ORDER, activePresetName,
+} from '../config.js';
 
 const DROP_LABEL_UI = { wide: 'WIDE', multi: 'MULTI', slow: 'SLOW', grav: 'FLIP+' };
 
@@ -356,8 +359,43 @@ export class Hud {
       r.text(v, cx - 108, y, { size: 12, weight: 600, color: rgba(COLORS.text, 0.85), tracking: 1 });
       y += 26;
     }
-    r.text(`BEST  ${Math.max(this.best, world.score).toLocaleString('en-US')}`, cx, 636, {
+    this._presetRow(r, cx, 610, t);
+    r.text(`BEST  ${Math.max(this.best, world.score).toLocaleString('en-US')}`, cx, 644, {
       size: 14, weight: 800, color: COLORS.gold, align: 'center', tracking: 4, alpha: 0.9,
+    });
+  }
+
+  /**
+   * The feel-preset selector: every option is visible so the choice reads as a
+   * *setting* rather than a hidden key, with the active one lit.
+   */
+  _presetRow(r, cx, y, t) {
+    const active = activePresetName();
+    const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+    r.text('FEEL', cx - 166, y, {
+      size: 12, weight: 900, color: COLORS.accent, align: 'center', baseline: 'middle', tracking: 3,
+    });
+    let x = cx - 106;
+    for (const name of PRESET_ORDER) {
+      const on = name === active;
+      const label = PRESETS[name].label;
+      const w = label.length * 8.4 + 20;
+      r.rect(x, y - 11, w, 22, {
+        fill: on ? rgba(COLORS.accent, 0.15 + pulse * 0.1) : 'rgba(255,255,255,0.04)',
+        stroke: on ? rgba(COLORS.accent, 0.9) : 'rgba(255,255,255,0.14)',
+        lw: on ? 1.6 : 1,
+        radius: 11,
+      });
+      r.text(label, x + w / 2, y, {
+        size: 11, weight: on ? 900 : 700,
+        color: on ? '#ffffff' : COLORS.dim,
+        align: 'center', baseline: 'middle', tracking: 2,
+        glow: on, glowColor: COLORS.accent, glowWidth: 8,
+      });
+      x += w + 8;
+    }
+    r.text('F3', cx + 166, y, {
+      size: 11, weight: 800, color: rgba(COLORS.dim, 0.85), align: 'center', baseline: 'middle', tracking: 2,
     });
   }
 
@@ -467,6 +505,10 @@ export class Hud {
     });
     r.text('P / ESC TO RESUME   ·   R TO RESTART   ·   M TO MUTE', cx, FIELD.y + 348, {
       size: 12, weight: 700, color: rgba(COLORS.text, 0.75), align: 'center', tracking: 3,
+    });
+    const label = PRESETS[activePresetName()].label;
+    r.text(`FEEL  ${label}   ·   F3 TO CHANGE`, cx, FIELD.y + 376, {
+      size: 12, weight: 800, color: rgba(COLORS.accent, 0.9), align: 'center', tracking: 3,
     });
   }
 }

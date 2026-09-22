@@ -19,6 +19,9 @@ const env = installCanvasMock({ width: 1000, height: 760, dpr: 1, rasterScale: 0
 
 await import('../src/main.js');
 const G = globalThis.GRAVITY_BALL;
+// The same module instance main.js imported, so mutations from applyPreset()
+// are visible here — which is exactly what these tests need to observe.
+const cfg = await import('../src/config.js');
 const { world, particles, fx } = G;
 
 const OUT = 'out/scenarios';
@@ -507,9 +510,117 @@ function scenarioBallNeverEscapes() {
   }
   env.setRasterize(true);
   check('ball never left the arena in 90 s of chaos play', escapes === 0, `escapes=${escapes}`);
-  check('speed stayed within its cap', maxSpeed <= 1420 * 1.02 + 0.5, `maxSpeed=${maxSpeed.toFixed(1)}`);
+  check('speed stayed within its cap', maxSpeed <= cfg.BALL.speedMax * 1.02 + 0.5, `maxSpeed=${maxSpeed.toFixed(1)}`);
   check('game never deadlocked', world.state !== 'menu', `state=${world.state}`);
   check('particle pool never overflowed', particles.live <= particles.max, `live=${particles.live}`);
+}
+
+
+/**
+ * Feel presets. Runs last on purpose: a preset mutates the shared config
+ * object, so any scenario after it would be asserting against a different
+ * tuning than the authored one.
+ */
+function scenarioPresets() {
+  const authored = {
+    gravity: cfg.BALL.gravity, speed: cfg.BALL.speed,
+    paddleW: cfg.PADDLE.w, speedMax: cfg.BALL.speedMax, flipCooldown: cfg.FLIP.cooldown,
+  };
+
+  world.toMenu();
+  run(0.4, { steer: false });
+  check('boots on the arcade preset', G.preset() === 'arcade', `preset=${G.preset()}`);
+  shot('22-feel-preset-title');
+
+  // ---------------------------------------------------------------- floaty ---
+  G.setPreset('floaty');
+  world.refreshFromConfig();
+  check('floaty lowers gravity', cfg.BALL.gravity < authored.gravity, `g=${cfg.BALL.gravity}`);
+  check('floaty widens the paddle', cfg.PADDLE.w > authored.paddleW, `w=${cfg.PADDLE.w}`);
+  check('world.gravity adopts the preset', Math.abs(world.gravity - (cfg.BALL.gravity + (world.levelIndex - 1) * cfg.BALL.gravityPerLevel)) < 1e-6,
+    `world=${world.gravity}`);
+  check('paddle width adopts the preset', Math.abs(world.paddle.w - cfg.PADDLE.w) < 1e-6, `w=${world.paddle.w}`);
+
+  // A preset must never be able to desync layout from physics: GRID carries
+  // derived values (pitchX/pitchY) computed once at load time.
+  check('preset leaves brick geometry untouched',
+    cfg.GRID.bw === 73 && cfg.GRID.pitchX === 79 && cfg.GRID.gapX === 6,
+    `bw=${cfg.GRID.bw} pitch=${cfg.GRID.pitchX}`);
+
+  // --------------------------------------------------------------- frantic ---
+  G.setPreset('frantic');
+  world.refreshFromConfig();
+  check('frantic raises gravity', cfg.BALL.gravity > authored.gravity, `g=${cfg.BALL.gravity}`);
+  check('frantic narrows the paddle', cfg.PADDLE.w < authored.paddleW, `w=${cfg.PADDLE.w}`);
+  check('frantic keeps the CCD speed cap', cfg.BALL.speedMax === authored.speedMax, `max=${cfg.BALL.speedMax}`);
+  check('frantic speeds the ball up', cfg.BALL.speed > authored.speed, `speed=${cfg.BALL.speed}`);
+
+  // ------------------------------------------------------------ idempotence ---
+  const snap = { g: cfg.BALL.gravity, w: cfg.PADDLE.w, c: cfg.FLIP.cooldown, d: cfg.DROPS.chance };
+  G.setPreset('arcade');
+  G.setPreset('frantic');
+  check('switching away and back cannot stack (baseline restore)',
+    cfg.BALL.gravity === snap.g && cfg.PADDLE.w === snap.w
+    && cfg.FLIP.cooldown === snap.c && cfg.DROPS.chance === snap.d,
+    `${cfg.BALL.gravity}/${cfg.PADDLE.w}/${cfg.FLIP.cooldown}/${cfg.DROPS.chance}`);
+
+  // ------------------------------------------------------------- rejection ---
+  const guard = cfg.BALL.gravity;
+  check('an unknown preset name is refused', G.setPreset('nonsense') === null);
+  check('a refused preset leaves the tuning untouched', cfg.BALL.gravity === guard, `g=${cfg.BALL.gravity}`);
+
+  // ------------------------------------------- preset swaps vs. power-ups ---
+  world.paddle.resize('wide');
+  G.setPreset('floaty');
+  world.refreshFromConfig();
+  check('the wide power-up survives a preset swap',
+    world.paddle.wide === true && Math.abs(world.paddle.targetW - cfg.PADDLE.wWide) < 1e-6,
+    `wide=${world.paddle.wide} target=${world.paddle.targetW} wWide=${cfg.PADDLE.wWide}`);
+  world.paddle.resize('normal');
+  world.refreshFromConfig();
+
+  // ------------------------------------------------------------ F3 + saving ---
+  G.setPreset('arcade');
+  const before = G.preset();
+  env.key('keydown', 'F3');
+  run(1 / 60, { steer: false });
+  env.key('keyup', 'F3');
+  const after = G.preset();
+  check('F3 cycles to a different preset', after !== before, `${before} -> ${after}`);
+  check('the chosen preset is written to localStorage',
+    globalThis.localStorage.getItem('gb.preset') === JSON.stringify(after),
+    `stored=${globalThis.localStorage.getItem('gb.preset')}`);
+
+  // ------------------------------------------- the game still plays (frantic) ---
+  G.setPreset('frantic');
+  world.refreshFromConfig();
+  world.startRun(777);
+  world.launch();
+  let escapes = 0;
+  let maxSpeed = 0;
+  const f = { x0: 10, x1: 990, y0: 80, y1: 670 };
+  for (let i = 0; i < 60 * 20; i++) {
+    const b = world.main;
+    if (b && !b.dead && !b.stuck) {
+      maxSpeed = Math.max(maxSpeed, Math.hypot(b.vx, b.vy));
+      if (b.x - b.r < f.x0 - 2 || b.x + b.r > f.x1 + 2 || b.y - b.r < f.y0 - 2 || b.y > f.y1 + 4) escapes++;
+    }
+    if (world.state === 'play' && b && !b.stuck && i % 6 === 0) world.flip.charge = 1;
+    env.step(1 / 60);
+    if (world.state === 'menu') break;
+  }
+  check('frantic plays 20 s without the ball escaping', escapes === 0, `escapes=${escapes}`);
+  check('frantic respects its speed cap', maxSpeed <= cfg.BALL.speedMax * 1.02 + 0.5, `max=${maxSpeed.toFixed(1)}`);
+
+  // ------------------------------------------------------------- restoration ---
+  G.setPreset('arcade');
+  world.refreshFromConfig();
+  check('arcade restores the authored tuning exactly',
+    cfg.BALL.gravity === authored.gravity && cfg.BALL.speed === authored.speed
+    && cfg.PADDLE.w === authored.paddleW && cfg.FLIP.cooldown === authored.flipCooldown,
+    `${cfg.BALL.gravity}/${cfg.BALL.speed}/${cfg.PADDLE.w}/${cfg.FLIP.cooldown}`);
+  check('restoring the preset also restores world.gravity',
+    Math.abs(world.gravity - authored.gravity) < 1e-6, `world=${world.gravity}`);
 }
 
 // ------------------------------------------------------------------ report ---
@@ -538,6 +649,7 @@ runAll(scenarioPause, 'pause');
 runAll(scenarioLayoutAndInput, 'layout + pointer/touch input');
 runAll(scenarioVisualCloseups, 'visual close-ups');
 runAll(scenarioBallNeverEscapes, '90 s physics soak');
+runAll(scenarioPresets, 'feel presets');
 
 console.log('\n--- audit ---');
 console.log('unsupported canvas APIs:', [...env.audit.unsupported].join(', ') || 'none');

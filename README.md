@@ -8,7 +8,7 @@ procedurally synthesized soundtrack.
 
 ```
 npm start          # serve on http://localhost:8080
-npm test           # syntax check + 64 headless gameplay assertions
+npm test           # syntax check + 84 headless gameplay assertions
 ```
 
 ---
@@ -23,7 +23,7 @@ the browser loads `src/main.js` directly as an ES module. Move with the mouse, p
 point of the project is how it *feels*, and no assertion can tell you that.
 
 **2. Run the test suite.** `npm test` — parses every module, then drives the **real `World`
-instance** through 64 assertions covering bomb chain reactions, shield bricks vs
+instance** through 84 assertions covering bomb chain reactions, shield bricks vs
 anti-gravity, each power-up, combo expiry, extra balls, last-life death, restart, level
 progression, pause, letterbox maths at 2560×1440, drag-vs-tap on touch, the on-screen flip
 pad, and a 90-second physics soak with deliberately erratic steering that asserts the ball
@@ -31,7 +31,7 @@ never leaves the arena and the speed cap holds.
 
 ```
 ✓ 17 modules parsed cleanly
-64 passed, 0 failed
+84 passed, 0 failed
 ```
 
 **3. Watch the autopilot.** `npm run shots` plays ~150 simulated seconds unattended and
@@ -65,6 +65,7 @@ seconds so you are constantly deciding whether to spend it.
 | Launch / flip / start / retry | Click · tap · `Space` |
 | Flip (touch) | the on-screen **GRAVITY** pad, or a tap that isn't a drag |
 | Pause · mute · restart · debug | `P` / `Esc` · `M` · `R` · `F1` |
+| Cycle feel preset | `F3` (or the FEEL row on the title screen) |
 
 Desktop is pointer-based (right-click also flips, in case you are playing one-handed and
 hate keyboards). On touch, a *drag* only steers the paddle and a *tap* flips, so you never
@@ -100,6 +101,7 @@ flip by accident while repositioning.
 | Pooled particles: shrapnel, sparks, shockwaves, smoke, embers, anti-gravity wind | `core/particles.js` |
 | **Procedural audio** — every sound synthesized from oscillators + one noise buffer | `core/audio.js` |
 | Score pop-ups, banner type, wave-animated logo, pips for lives | `render/hud.js` |
+| A **FEEL** preset selector on the title screen, so the tuning is playable rather than argued about | `config.js`, `render/hud.js` |
 | Ball trail, paddle heat trail, animated hazard chevrons that speed up as the ball falls | `world.js`, `bg.js` |
 
 ## Physics notes
@@ -117,6 +119,49 @@ flip by accident while repositioning.
 * The paddle uses an **exponential chase** (`1 - e^(-λt)`) rather than a speed, which reads
   as weight without input lag; its own velocity is added into the bounce ("english"), so
   flicking the paddle slingshots the ball.
+
+
+## Feel presets
+
+Game feel is a search problem, so the search space is a runtime setting instead of a
+constant. `F3` (or the **FEEL** row on the title screen) rotates between three tunings, and
+the choice persists in `localStorage`.
+
+| | FLOATY | ARCADE | FRANTIC |
+|---|---|---|---|
+| Gravity | 300 px/s² | 420 | 620 |
+| Launch speed | 520 | 600 | 720 |
+| Speed per level | +14 | +22 | +32 |
+| Paddle width | 168 px | 130 | 108 |
+| Flip duration / cooldown | 1.35 s / 0.85 s | 1.05 s / 1.15 s | 0.85 s / 1.45 s |
+| Chain window | 4.5 s | 3.5 s | 2.6 s |
+| Drop chance | 14% | 11% | 9% |
+| Shake ceiling | 20 px | 30 px | 38 px |
+
+**ARCADE is the authored tuning** — it is what the numbers in `config.js` already were, so
+the default experience is unchanged. The other two are different *reads* of the same rules
+rather than difficulty levels bolted on afterwards: FLOATY lowers gravity so the ball hangs
+and you can lead shots instead of reacting; FRANTIC makes it dive early and takes away the
+generous paddle, so every save is earned.
+
+Implementation notes, because the obvious version of this is a bug factory:
+
+* A preset only ever touches **feel** numbers — never geometry. Brick layout (`GRID`), the
+  playfield and the ball radius are level design, and `GRID` carries derived values
+  (`pitchX`/`pitchY`) computed once at load. Keeping presets off them means a preset can
+  never desync the layout from the physics.
+* Each preset is a **partial override over a `BASELINE` snapshot**, and applying a preset
+  restores the baseline first. That is what makes switching idempotent: applying `frantic`
+  twice cannot stack, and `floaty → arcade` fully undoes `floaty` instead of leaving
+  residue behind. An unknown name is refused outright rather than half-applied.
+* `speedMax` is deliberately **identical in all three**. It is the cap that keeps the
+  continuous collision detection honest — a physics constraint, not a difficulty knob.
+* Swapping presets **does not rescale the ball in flight**. Balls keep their velocity on
+  purpose: teleporting a ball mid-rally would read as a bug, and the per-collision min/max
+  clamps walk the speed into the new range within a bounce or two.
+* A preset swap **preserves an active wide power-up** rather than silently cancelling it —
+  the paddle remembers whether it is wide (`paddle.wide`) instead of inferring it from its
+  current width.
 
 ## Architecture
 
@@ -163,7 +208,7 @@ game's draw calls in JavaScript and writes PNGs. That makes the real game runnab
 
 ```
 node tools/lint.mjs              # parse every module
-node tools/scenarios.mjs         # 64 assertions + 21 screenshots in out/scenarios/
+node tools/scenarios.mjs         # 84 assertions + 22 screenshots in out/scenarios/
 node tools/harness.mjs --seconds 150   # autopilot plays the game, screenshots key moments
 ```
 
@@ -173,11 +218,17 @@ progression, pause, letterbox/DPR maths at 2560×1440, drag-vs-tap on touch, the
 flip pad, portrait layout — plus a **90-second physics soak** that plays with deliberately
 erratic steering and asserts the ball never leaves the arena and the speed cap holds.
 
+The presets get their own 20 assertions, including the two that matter most: that
+switching `floaty → arcade → frantic` cannot stack, and that a preset swap never touches
+brick geometry. It also replays **20 seconds of FRANTIC** — the heaviest tuning — through
+the same escape-and-speed-cap soak, and runs last, since a preset mutates the shared config
+object that every other scenario asserts against.
+
 ## Accessibility & settings
 
 * `prefers-reduced-motion` is respected (shake and flash are damped in `main.js`).
 * `F2` toggles screen shake, `M` mutes; both persist in `localStorage`, as does the best
-  score. The bottom band is a reserved touch strip, so no button ever sits under your
+  score and the chosen feel preset. The bottom band is a reserved touch strip, so no button ever sits under your
   finger mid-rally.
 * The canvas carries a descriptive `aria-label` and the page has a text summary of the
   controls for screen readers; audio is fully optional and never required to play.

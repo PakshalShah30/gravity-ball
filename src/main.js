@@ -17,7 +17,10 @@ import { GameAudio } from './core/audio.js';
 import { Input } from './core/input.js';
 import { World, STATE } from './game/world.js';
 import { makeRng } from './core/math.js';
-import { VIEW, FIELD, TIMING, JUICE, COLORS } from './config.js';
+import {
+  VIEW, FIELD, TIMING, JUICE, COLORS,
+  PRESETS, applyPreset, activePresetName, nextPresetName, isPreset,
+} from './config.js';
 
 // ---------------------------------------------------------------- storage ---
 const store = {
@@ -76,8 +79,26 @@ try {
   });
 } catch { /* Safari < 14 uses addListener; the initial read is enough */ }
 
+/**
+ * Rotate the feel preset and make the change *legible*: a banner names it, the
+ * name persists, and the world re-reads the numbers immediately so the swap is
+ * visible even while paused or on the title screen.
+ */
+function cyclePreset(dir) {
+  const name = nextPresetName(dir);
+  applyPreset(name);
+  store.write('gb.preset', name);
+  world.refreshFromConfig();
+  hud.banner(PRESETS[name].label, PRESETS[name].blurb, 1.6, COLORS.accent);
+}
+
 let best = store.read('gb.best', 0) || 0;
 const settings = Object.assign({ shake: true, scanlines: true, muted: false }, store.read('gb.settings', {}));
+
+// Apply the saved feel preset before the world builds its first level, so the
+// attract mode already plays at the tuning the player last chose.
+const storedPreset = store.read('gb.preset', 'arcade');
+applyPreset(isPreset(storedPreset) ? storedPreset : 'arcade');
 fx.shakeEnabled = settings.shake;
 renderer.scanlinesOn = settings.scanlines;
 audio.muted = settings.muted;
@@ -149,6 +170,7 @@ function frame() {
     world.startRun();
     world.state = STATE.READY;
   }
+  if (input.cyclePreset) cyclePreset(1);
   if (input.debug) debug = !debug;
 
   const dtV = real * fx.simScale;
@@ -276,6 +298,14 @@ globalThis.GRAVITY_BALL = {
   get debug() { return debug; },
   set debug(v) { debug = !!v; },
   startRun: (seed) => world.startRun(seed),
+  preset: () => activePresetName(),
+  setPreset: (name) => {
+    if (!applyPreset(name)) return null;
+    store.write('gb.preset', name);
+    world.refreshFromConfig();
+    return name;
+  },
+  cyclePreset,
   stop() { running = false; },
 };
 

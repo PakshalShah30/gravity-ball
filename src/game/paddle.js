@@ -17,6 +17,7 @@ export class Paddle {
   constructor() {
     this.w = PADDLE.w;
     this.targetW = PADDLE.w;
+    this.wide = false;   // tracks the wide power-up so a preset swap can't cancel it
     this.h = PADDLE.h;
     this.x = FIELD.x + FIELD.w / 2;
     this.y = PADDLE.y;
@@ -38,7 +39,21 @@ export class Paddle {
   }
 
   resize(kind) {
-    this.targetW = kind === 'wide' ? PADDLE.wWide : PADDLE.w;
+    this.wide = kind === 'wide';
+    this.targetW = this.wide ? PADDLE.wWide : PADDLE.w;
+  }
+
+  /**
+   * Re-read the paddle width from config after a feel preset changed it.
+   * `this.wide` remembers whether the wide power-up is active, so swapping
+   * presets mid-power-up re-bases the width instead of silently cancelling it
+   * (which is what comparing targetW against PADDLE.wWide used to do).
+   */
+  refreshWidth() {
+    this.targetW = this.wide ? PADDLE.wWide : PADDLE.w;
+    // Snap immediately: a preset change is a discrete event, so animating the
+    // paddle from its old width would read as a power-up rather than a setting.
+    this.w = this.targetW;
   }
 
   update(dt, input, playing) {

@@ -129,6 +129,29 @@ export class World {
   /** 0..1: how close the lowest ball is to the pit. Drives red screen glow. */
   get danger() { return this._danger(); }
 
+  /**
+   * Re-read the feel numbers from config after a preset swap.
+   *
+   * `gravity` is cached on the world and normally refreshed every simulated
+   * step, so it self-heals during play — but it must also be right while
+   * paused, in the menu and during the clear/death states, where no step runs.
+   * The paddle width is not recomputed by anything, so it needs the explicit
+   * nudge. Balls keep their current velocity on purpose: rescaling the ball
+   * mid-flight would teleport it and feel like a bug, and the existing
+   * per-collision min/max clamps walk the speed into the new preset's range
+   * within a bounce or two.
+   */
+  refreshFromConfig() {
+    this.gravity = BALL.gravity + (this.levelIndex - 1) * BALL.gravityPerLevel;
+    this.paddle.refreshWidth();
+    if (this.flip.active) {
+      // Mid-flip the gravity is the flip's own accel curve, not the preset's;
+      // recompute it so the move keeps its authored shape at the new tuning.
+      const speed = Math.max(...this.balls.map((b) => Math.hypot(b.vx, b.vy)), BALL.speed);
+      this.flip.accel = -clamp((speed * 2.4) / FLIP.duration, 1200, 6200);
+    }
+  }
+
   // ================================================================= flow ===
 
   toMenu() {
