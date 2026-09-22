@@ -1,0 +1,21 @@
+{
+  "name": "gravity-ball",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Neon arcade breakout with gravity flips, chain multipliers and an absurd amount of juice. Zero dependencies, zero build step.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["game", "canvas", "breakout", "game-feel", "juice", "webaudio"],
+  "scripts": {
+    "start": "python3 -m http.server 8080 --bind 0.0.0.0",
+    "serve": "python3 -m http.server 8080 --bind 0.0.0.0",
+    "test": "node tools/lint.mjs && node tools/scenarios.mjs",
+    "lint": "node tools/lint.mjs",
+    "scenarios": "node tools/scenarios.mjs",
+    "simulate": "node tools/harness.mjs --seconds 150",
+    "shots": "node tools/harness.mjs --seconds 150 --shots out/shots"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

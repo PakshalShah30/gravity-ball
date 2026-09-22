@@ -1,0 +1,5 @@
+# Build/test output (screenshots, logs) — the game itself has no build artifacts.
+out/
+node_modules/
+*.log
+.DS_Store
