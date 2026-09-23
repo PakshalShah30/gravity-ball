@@ -1,0 +1,55 @@
+/* GRAVITY BALL — the canvas does all the visual work; CSS only frames it. */
+
+:root {
+  color-scheme: dark;
+  --ink: #04050a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #0d1226 0%, #05070f 55%, #04050a 100%);
+  color: #e8f4ff;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+#stage {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  /* The game owns all gestures: no scroll, no pinch-zoom, no double-tap zoom. */
+  touch-action: none;
+  cursor: none; /* the paddle is the cursor */
+  outline: none;
+}
+
+.noscript {
+  position: fixed;
+  inset: auto 0 1rem 0;
+  text-align: center;
+  color: #7d8ba6;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The renderer also reads this media query and dials the shake/flash down. */
+  #stage { scroll-behavior: auto; }
+}
