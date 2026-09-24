@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#04050a" />
+<title>GRAVITY BALL — Level Editor</title>
+<meta name="description" content="Paint a Gravity Ball level, test it instantly and share it as a link." />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="src/editor/editor.css" />
+</head>
+<body>
+  <header>
+    <a class="back" href="index.html">← Game</a>
+    <h1>LEVEL EDITOR</h1>
+    <span class="muted" id="count">0 bricks</span>
+  </header>
+
+  <main>
+    <section class="board-wrap" aria-label="Level grid">
+      <div id="board" role="grid" aria-label="12 by 6 brick grid"></div>
+      <p class="muted hint">Click or drag to paint. Right-click (or the Eraser) clears. The boss core covers a 4×2 block from where you place it.</p>
+    </section>
+
+    <aside>
+      <h2>Brick</h2>
+      <div id="palette" role="radiogroup" aria-label="Brick palette"></div>
+
+      <h2>Level</h2>
+      <div class="row">
+        <button type="button" id="play" class="primary">▶ Play it</button>
+        <button type="button" id="copy">Copy share link</button>
+      </div>
+      <div class="row">
+        <button type="button" id="random">Random</button>
+        <button type="button" id="mirror">Mirror L→R</button>
+        <button type="button" id="clear">Clear</button>
+      </div>
+      <ul id="problems" aria-live="polite"></ul>
+
+      <h2>Share code</h2>
+      <div class="row">
+        <input id="code" spellcheck="false" autocomplete="off" aria-label="Share code" />
+        <button type="button" id="load">Load</button>
+      </div>
+      <p class="muted" id="status" role="status"></p>
+    </aside>
+  </main>
+
+  <script type="module" src="src/editor/editor.js"></script>
+</body>
+</html>

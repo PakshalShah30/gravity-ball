@@ -77,7 +77,8 @@ export const COMBO = {
 };
 
 export const SCORING = {
-  brick: { basic: 100, armored: 250, bomb: 300, shield: 400 },
+  brick: { basic: 100, armored: 250, bomb: 300, shield: 400, portal: 350, ghost: 300, boss: 5000 },
+  bossHit: 60,         // per damaging hit on the boss core
   airChain: 150,       // per brick in one airborne phase
   levelClear: 1000,
   lifeBonus: 250,
@@ -90,8 +91,9 @@ export const LIVES_START = 3;
 export const DROPS = {
   chance: 0.11,        // per destroyed brick (bombs always drop)
   speed: 190,
-  kinds: ['wide', 'multi', 'slow', 'grav', 'points'],
-  duration: { wide: 14, slow: 7, grav: 12 },
+  kinds: ['wide', 'multi', 'slow', 'grav', 'points', 'magnet'],
+  duration: { wide: 14, slow: 7, grav: 12, magnet: 10 },
+  magnetPull: 1500,    // px/s² sideways pull towards the paddle on a falling ball
 };
 
 export const TIMING = {
@@ -151,6 +153,10 @@ export const COLORS = {
   bomb: '#ff5040',
   bombCore: '#ffd166',
   shield: '#7c5cff',
+  portal: ['#3dffb0', '#ff9a3d'],   // one colour per portal pair
+  ghost: '#c9d6ff',
+  boss: '#ff3fa4',
+  magnet: '#ff6b8b',
 };
 
 // ---------------------------------------------------------------- presets ---

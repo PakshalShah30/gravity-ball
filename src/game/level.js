@@ -9,12 +9,24 @@
  * mechanics in order (plain -> armoured -> bombs -> shields). From level 6 a
  * seeded generator takes over with mirrored patterns, so runs still differ.
  */
-import { makeRng, clamp, mixHex, shade, easeOutBack, easeOutCubic, TAU } from '../core/math.js';
+import { makeRng, clamp, mixHex, rgba, shade, easeOutBack, easeOutCubic, TAU } from '../core/math.js';
 import { GRID, COLORS } from '../config.js';
 
-export const KIND = { NORMAL: 0, ARMORED: 1, BOMB: 2, SHIELD: 3 };
+export const KIND = { NORMAL: 0, ARMORED: 1, BOMB: 2, SHIELD: 3, PORTAL: 4, GHOST: 5, BOSS: 6 };
 
-/** '.' empty | 1-6 palette row | a armoured | b bomb | s shield */
+/**
+ * '.' empty | 1-6 palette row | a armoured | b bomb | s shield
+ * p portal (paired in reading order: the ball enters one and leaves the other)
+ * g ghost  (phases in and out: solid for a while, then the ball passes through)
+ */
+/** Every character a layout may contain (the level editor's palette). */
+export const LAYOUT_CHARS = '.123456abspgB';
+
+/** Boss levels: every 5th level from 10 on hosts a core that spans 4x2 cells. */
+export function isBossLevel(index) { return index >= 10 && index % 5 === 0; }
+
+export const GHOST = { solid: 1.6, phased: 1.1 };   // seconds per phase
+export const BOSS = { cols: 4, rows: 2, baseHp: 22, hpPerLevel: 2, guardEvery: 7, guardTime: 2.2 };
 const TEMPLATES = [
   [
     '....1111....',
@@ -76,18 +88,30 @@ export class Level {
 
   // ----------------------------------------------------------------- build ---
 
-  build(index, seed) {
+  /**
+   * Build a level. `opts.layout` (an array of row strings) replaces the
+   * authored/procedural layout — used by the level editor and custom codes.
+   * `opts.procedural` skips the hand-built teaching levels (daily challenge).
+   */
+  build(index, seed, opts = {}) {
     this.index = index;
+    this.boss = null;
+    this.portals = [];
     this.time = 0;
     this.bricks.length = 0;
     this.grid.fill(null);
     this.alive = 0;
+    this.bossDown = false;
     this.clearing = false;
     this.cleared = 0;
     this.rng = makeRng(seed + index * 7919);
 
     const rng = this.rng;
-    const tpl = index <= TEMPLATES.length ? TEMPLATES[index - 1] : this._generate(index, rng);
+    const tpl = opts.layout
+      ? opts.layout
+      : (index <= TEMPLATES.length && !opts.procedural)
+        ? TEMPLATES[index - 1]
+        : this._generate(opts.procedural ? index + TEMPLATES.length : index, rng, isBossLevel(index) && !opts.procedural);
     const maxHp = index >= 8 ? 2 : 1;
 
     for (let row = 0; row < tpl.length && row < this.rows; row++) {
@@ -99,6 +123,9 @@ export class Level {
         if (ch === 'a') { kind = KIND.ARMORED; hp = index >= 10 ? 4 : 3; }
         else if (ch === 'b') { kind = KIND.BOMB; hp = 1; }
         else if (ch === 's') { kind = KIND.SHIELD; hp = 1; }
+        else if (ch === 'p') { kind = KIND.PORTAL; hp = 3; }
+        else if (ch === 'g') { kind = KIND.GHOST; hp = 1; }
+        else if (ch === 'B') continue;   // boss footprint, placed below
         else if (ch >= '1' && ch <= '9') {
           kind = KIND.NORMAL;
           // Later levels harden a share of the plain bricks.
@@ -118,11 +145,16 @@ export class Level {
         };
         // Assemble animation: a wave from the middle of the row outward.
         brick.spawnDelay = Math.abs(col - (this.cols - 1) / 2) * 0.045 + row * 0.02;
+        if (kind === KIND.GHOST) brick.phaseT = (col + row) % 2 ? GHOST.solid * 0.5 : 0;
         this.bricks.push(brick);
         this.grid[col + row * this.cols] = brick;
+        if (kind === KIND.PORTAL) this.portals.push(brick);
         this.alive++;
       }
     }
+    this._pairPortals();
+    const bossAt = tpl.findIndex((line) => line.includes('B'));
+    if (bossAt >= 0) this._placeBoss(tpl[bossAt].indexOf('B'), bossAt, index);
     this.total = this.alive;
     // Bricks only start assembling when the world tells them to.
     for (const b of this.bricks) b.spawn = -1;
@@ -130,12 +162,66 @@ export class Level {
     return this;
   }
 
+  /** Portals pair up in reading order; an unpaired one becomes a plain brick. */
+  _pairPortals() {
+    const ps = this.portals;
+    for (let i = 0; i + 1 < ps.length; i += 2) {
+      ps[i].partner = ps[i + 1];
+      ps[i + 1].partner = ps[i];
+      ps[i].pair = ps[i + 1].pair = i / 2;
+    }
+    if (ps.length % 2) {
+      const lone = ps.pop();
+      lone.kind = KIND.NORMAL;
+      lone.hp = lone.maxHp = 1;
+    }
+  }
+
+  /** The boss core: one brick object that owns a block of grid cells. */
+  _placeBoss(col, row, index) {
+    col = clamp(col, 0, this.cols - BOSS.cols);
+    row = clamp(row, 0, this.rows - BOSS.rows);
+    // Clear whatever the layout put under the footprint.
+    for (let r = row; r < row + BOSS.rows; r++) {
+      for (let c = col; c < col + BOSS.cols; c++) {
+        const b = this.grid[c + r * this.cols];
+        if (b) { b.alive = false; this.alive--; this.grid[c + r * this.cols] = null; }
+      }
+    }
+    const hp = BOSS.baseHp + index * BOSS.hpPerLevel;
+    const boss = {
+      col, row, cells: [],
+      x: GRID.originX + col * GRID.pitchX,
+      y: GRID.originY + row * GRID.pitchY,
+      w: BOSS.cols * GRID.pitchX - GRID.gapX,
+      h: BOSS.rows * GRID.pitchY - GRID.gapY,
+      kind: KIND.BOSS, hp, maxHp: hp, alive: true,
+      flash: 0, spawn: -1, spawnDelay: 0.3, wob: 0, seed: 1.7,
+      color: COLORS.boss ?? '#ff3fa4',
+      guard: 0, guardClock: BOSS.guardEvery,
+    };
+    for (let r = row; r < row + BOSS.rows; r++) {
+      for (let c = col; c < col + BOSS.cols; c++) {
+        this.grid[c + r * this.cols] = boss;
+        boss.cells.push(c + r * this.cols);
+      }
+    }
+    this.bricks.push(boss);
+    this.boss = boss;
+    this.alive++;
+  }
+
+  /** True if the ball should collide with this brick right now. */
+  isSolid(b) {
+    return b.kind !== KIND.GHOST || !b.phased;
+  }
+
   startIntro() {
     for (const b of this.bricks) b.spawn = 0;
   }
 
   /** Procedural layouts from level 6 on, mirrored for symmetry. */
-  _generate(index, rng) {
+  _generate(index, rng, withBoss = false) {
     const rows = this.rows, cols = this.cols;
     const pattern = PATTERNS[(index - 6) % PATTERNS.length];
     const density = clamp(0.42 + (index - 6) * 0.035, 0.42, 0.86);
@@ -177,6 +263,13 @@ export class Level {
     special('b', Math.min(6, 1 + ((index - 6) / 3) | 0), 1);
     special('s', Math.min(8, 1 + ((index - 6) / 4) | 0), 1);
     special('a', Math.min(14, 2 + ((index - 6) / 2) | 0));
+    // Newer mechanics arrive gradually: ghosts from 7, portal pairs from 8.
+    if (index >= 7) special('g', Math.min(6, 1 + ((index - 7) / 3) | 0), 2);
+    if (index >= 8) special('p', 2 * Math.min(2, 1 + ((index - 8) / 6) | 0), 2);
+    if (withBoss) {
+      const r0 = 1, c0 = 4;
+      lines[r0] = lines[r0].slice(0, c0) + 'B' + lines[r0].slice(c0 + 1);
+    }
     return lines;
   }
 
@@ -192,6 +285,17 @@ export class Level {
         if (b.spawn < b.spawnDelay + 0.6) spawning = true;
       }
       if (b.flash > 0) b.flash = Math.max(0, b.flash - dt * 5.5);
+      if (b.kind === KIND.GHOST) {
+        b.phaseT = (b.phaseT ?? 0) + dt;
+        const cycle = GHOST.solid + GHOST.phased;
+        b.phased = (b.phaseT % cycle) > GHOST.solid;
+      } else if (b.kind === KIND.BOSS && b.spawn >= 0) {
+        if (b.guard > 0) b.guard = Math.max(0, b.guard - dt);
+        else {
+          b.guardClock -= dt;
+          if (b.guardClock <= 0) { b.guard = BOSS.guardTime; b.guardClock = BOSS.guardEvery; }
+        }
+      }
       if (b.wob > 0) b.wob = Math.max(0, b.wob - dt * 4);
     }
     if (this.clearing) this.cleared = Math.min(1, this.cleared + dt / 0.5);
@@ -208,7 +312,8 @@ export class Level {
   /** Damage a brick. Returns 'destroyed' | 'damaged' | 'blocked'. */
   hit(brick, damage, world) {
     if (!brick.alive) return 'blocked';
-    if (brick.kind === KIND.SHIELD && !(world.flip.active || damage > 1)) {
+    const guarded = brick.kind === KIND.BOSS && brick.guard > 0;
+    if ((brick.kind === KIND.SHIELD || guarded) && !(world.flip.active || damage > 1)) {
       brick.flash = 1;
       brick.wob = 1;
       return 'blocked';
@@ -225,7 +330,9 @@ export class Level {
     if (!brick.alive) return;
     brick.alive = false;
     this.alive--;
-    this.grid[brick.col + brick.row * this.cols] = null;
+    if (brick.cells) for (const c of brick.cells) this.grid[c] = null;
+    else this.grid[brick.col + brick.row * this.cols] = null;
+    if (brick === this.boss) this.bossDown = true;
   }
 
   /** Bricks inside an AABB (used by bomb explosions). */
@@ -237,7 +344,7 @@ export class Level {
     for (let row = r0; row <= r1; row++) {
       for (let col = c0; col <= c1; col++) {
         const b = this.grid[col + row * this.cols];
-        if (b && b.alive) cb(b);
+        if (b && b.alive && (b.kind !== KIND.BOSS || (col === Math.max(c0, b.col) && row === Math.max(r0, b.row)))) cb(b);
       }
     }
   }
@@ -255,7 +362,7 @@ export class Level {
     for (let row = r0; row <= r1; row++) {
       for (let col = c0; col <= c1; col++) {
         const b = this.grid[col + row * this.cols];
-        if (b && b.alive) out.push(b);
+        if (b && b.alive && this.isSolid(b) && !out.includes(b)) out.push(b);
       }
     }
     return out;
@@ -302,6 +409,12 @@ function drawBrick(r, b, t, level, run) {
   if (b.kind === KIND.ARMORED) color = mixHex(b.color, COLORS.armored, 0.55);
   if (b.kind === KIND.BOMB) color = COLORS.bomb;
   if (b.kind === KIND.SHIELD) color = mixHex(b.color, COLORS.shield, 0.6);
+  if (b.kind === KIND.PORTAL) color = COLORS.portal[(b.pair ?? 0) % COLORS.portal.length];
+  if (b.kind === KIND.GHOST) color = COLORS.ghost;
+  if (b.kind === KIND.BOSS) color = b.guard > 0 ? mixHex(COLORS.boss, COLORS.shield, 0.6) : COLORS.boss;
+  // Ghosts fade out while phased so the player can read "the ball passes now".
+  const ghostAlpha = b.kind === KIND.GHOST ? (b.phased ? 0.22 : 1) : 1;
+  if (ghostAlpha < 1) r.ctx.globalAlpha = ghostAlpha;
   if (b.kind === KIND.NORMAL && b.hp > 1) color = mixHex(color, '#ffffff', 0.25);
   if (damaged) color = mixHex(color, '#101820', 0.42);
   if (b.flash > 0) color = mixHex(color, '#ffffff', b.flash * 0.85);
@@ -344,6 +457,31 @@ function drawBrick(r, b, t, level, run) {
       r.line(cx + Math.cos(a) * 7, cy + Math.sin(a) * 4.5, cx + Math.cos(a) * 10, cy + Math.sin(a) * 6.5,
         { color: COLORS.bombCore, lw: 1.6, alpha: 0.5 + pulse * 0.4 });
     }
+  } else if (b.kind === KIND.PORTAL) {
+    // swirl: two counter-rotating arcs + a dark eye
+    r.circle(cx, cy, h * 0.34, { fill: '#05060d', alpha: 0.85 });
+    for (let i = 0; i < 3; i++) {
+      const a = t * (i % 2 ? -4 : 5) + i * 2.1 + b.seed;
+      r.line(cx + Math.cos(a) * h * 0.2, cy + Math.sin(a) * h * 0.2,
+        cx + Math.cos(a + 1.2) * h * 0.42, cy + Math.sin(a + 1.2) * h * 0.42,
+        { color: mixHex(color, '#ffffff', 0.5), lw: 1.6, alpha: 0.9 });
+    }
+  } else if (b.kind === KIND.GHOST) {
+    const s = 0.5 + 0.5 * Math.sin(t * 5 + b.seed);
+    r.rect(x + 3, y + 3, w - 6, h - 6, { stroke: mixHex(color, '#ffffff', 0.5), lw: 1, alpha: 0.4 + s * 0.4, radius: 3 });
+    r.circle(cx - 7, cy - 1, 2.2, { fill: '#05060d', alpha: 0.8 });
+    r.circle(cx + 7, cy - 1, 2.2, { fill: '#05060d', alpha: 0.8 });
+  } else if (b.kind === KIND.BOSS) {
+    const pulse = 0.5 + 0.5 * Math.sin(t * 4);
+    const k = b.hp / b.maxHp;
+    r.circle(cx, cy, h * 0.3 + pulse * 3, { fill: mixHex(COLORS.bombCore, '#ffffff', pulse * 0.5) });
+    r.circle(cx, cy, h * 0.42, { stroke: mixHex(color, '#ffffff', 0.4), lw: 2, alpha: 0.8 });
+    // health strip inside the core
+    r.rect(x + 8, y + h - 9, (w - 16), 4, { fill: 'rgba(0,0,0,0.5)', radius: 2 });
+    r.rect(x + 8, y + h - 9, (w - 16) * k, 4, { fill: mixHex(COLORS.danger, COLORS.gold, k), radius: 2 });
+    if (b.guard > 0) {
+      r.rect(x - 4, y - 4, w + 8, h + 8, { stroke: rgba(COLORS.shield, 0.5 + pulse * 0.4), lw: 2.5, radius: 8 });
+    }
   } else if (b.kind === KIND.SHIELD) {
     // animated shimmer sweep across the shield
     const sweep = ((t * 0.6 + b.seed * 0.1) % 1) * (w + 40) - 20;
@@ -363,4 +501,5 @@ function drawBrick(r, b, t, level, run) {
       r.rect(x - 1, y - 1, w + 2, h + 2, { stroke: 'rgba(255,90,90,0.35)', lw: 1, radius: 4 });
     }
   }
+  if (ghostAlpha < 1) r.ctx.globalAlpha = 1;
 }

@@ -1,0 +1,15 @@
+{
+  "name": "Gravity Ball",
+  "short_name": "Gravity Ball",
+  "description": "Neon arcade breakout with gravity flips, bosses, portals and a level editor.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#04050a",
+  "theme_color": "#04050a",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

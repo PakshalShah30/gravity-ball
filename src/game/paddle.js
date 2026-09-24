@@ -27,6 +27,16 @@ export class Paddle {
     this.trail = [];
     this.hue = 0;
     this.stretchX = 0;
+    // Cosmetic skin (see meta/progress.js SKINS). null = the authored colours.
+    this.skin = null;
+  }
+
+  get coreBase() { return this.skin?.core ?? COLORS.paddle; }
+  get deepBase() { return this.skin?.deep ?? COLORS.paddleDeep; }
+  trailColor(k, t) {
+    const tr = this.skin?.trail ?? COLORS.flip;
+    if (tr === 'rainbow') return COLORS.brick[Math.floor(t * 6 + k * 8) % COLORS.brick.length];
+    return mixHex(this.coreBase, tr, k * 0.5);
   }
 
   get left() { return this.x - this.w / 2; }
@@ -126,7 +136,7 @@ export class Paddle {
       if (s.a <= 0.01) continue;
       const k = 1 - s.a;
       r.glowRect(s.x - s.w / 2 * (1 + k * 0.2), this.y - 3, s.w * (1 + k * 0.2), 6,
-        mixHex(COLORS.paddle, COLORS.flip, k * 0.5), s.a * 0.12, 4);
+        this.trailColor(k, t), s.a * 0.12, 4);
     }
 
     const w = this.w * (1 + this.stretchX - this.squash * 0.35);
@@ -136,11 +146,11 @@ export class Paddle {
 
     // --- energy core + glow
     const hot = this.flash;
-    const coreColor = mixHex(mixHex(COLORS.paddle, '#ffffff', 0.35 * hot), COLORS.danger, danger * 0.35);
+    const coreColor = mixHex(mixHex(this.coreBase, '#ffffff', 0.35 * hot), COLORS.danger, danger * 0.35);
     r.halo(this.x, this.y, w * 0.72, coreColor, 0.28 + hot * 0.5, 0.18);
 
     // --- body
-    r.rect(x, y, w, h, { fill: mixHex(COLORS.paddleDeep, '#000000', 0.35), radius: 8 });
+    r.rect(x, y, w, h, { fill: mixHex(this.deepBase, '#000000', 0.35), radius: 8 });
     r.rect(x + 1.5, y + 1.5, w - 3, h - 3, { fill: coreColor, radius: 7, alpha: 0.85 });
     r.rect(x + 6, y + 2.5, w - 12, 2.4, { fill: '#ffffff', alpha: 0.75 + hot * 0.25, radius: 2 });
 
@@ -153,7 +163,7 @@ export class Paddle {
       const k = 1 - this.squash / Math.max(0.01, PADDLE.squash);
       const rx = w * (0.5 + easeOutCubic(Math.min(1, k)) * 0.5);
       r.rect(this.x - rx, this.y - 4, rx * 2, 8, {
-        stroke: rgba(COLORS.paddle, (1 - k) * 0.8), lw: 2, radius: 4,
+        stroke: rgba(this.coreBase, (1 - k) * 0.8), lw: 2, radius: 4,
       });
     }
   }

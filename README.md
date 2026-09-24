@@ -9,6 +9,21 @@ a canvas.
 
 ![Gravity Ball — a bomb chain reaction mid gravity-flip](docs/screenshot-juice.png)
 
+### New in 1.1
+
+* **New bricks:** paired **portals** that fling the ball out of their twin, **ghost** bricks
+  that phase in and out, and a **boss core** every 5th level from 10 that guards itself
+  on a timer (only anti-gravity breaks the guard).
+* **Magnet** power-up (`U`): a falling ball is tugged sideways towards the paddle.
+* **Daily challenge:** one seeded run per day, the same for everyone, with its own best score.
+* **Level editor** (`editor.html`): paint a level, play it at once, share it as a link.
+* **Progression:** a top-10 high-score table, 16 achievements, lifetime stats and 7 paddle
+  skins unlocked by achievements.
+* **Ship it:** installable and playable offline (PWA), CI on every push, and a GitHub
+  Pages deploy workflow.
+* **Fixes:** the game-over "best chain" always showed x1 (it was never recorded), and on
+  late levels a gravity flip could push the ball past `speedMax` (~2000 px/s measured).
+
 ## Play it in 30 seconds
 
 ```bash
@@ -40,6 +55,9 @@ Open **http://localhost:8080** and move the mouse. That's the whole install.
 | Flip (touch) | the on-screen **GRAVITY** pad — or a tap that isn't a drag |
 | Pause · mute · restart · debug | `P` / `Esc` · `M` · `R` · `F1` |
 | Change the feel preset | `F3` (or the FEEL row on the title screen) |
+| Daily challenge · records · editor | `C` · `H` · `E` on the title / game-over screen (or the buttons) |
+| Next paddle skin | `K` |
+| Back to the title after a game over | `Esc` |
 
 Desktop is pointer-based (right-click also flips, for keyboard-less play). On touch, a
 *drag* only steers and a *tap* flips, so you never flip by accident while repositioning.
@@ -102,9 +120,43 @@ seconds so you are constantly deciding whether to spend it.
 * Landing a hit after an airborne chain of 4+ pays an **air-chain bonus**.
 * Brick types: **plain** (multi-row colours), **armoured** (3–4 hits, cracks as it dies),
   **bomb** (detonates a chain reaction through its neighbours), **shield** (immune to
-  normal hits — only anti-gravity gets through).
+  normal hits — only anti-gravity gets through), **portal** (paired: bounce off one and
+  you leave its twin from the same face; 3 hits), **ghost** (solid 1.6 s, intangible 1.1 s).
+* **Boss levels** (10, 15, 20…): a 4×2 core with a health bar. Every 7 s it raises a guard
+  for 2 s that only a gravity flip gets through. Bombs chip it rather than one-shot it.
+  Killing it pays 5,000 plus a 2,500 clear bonus.
 * Power-ups drop from broken bricks: `W` wide paddle, `M` multiball, `S` slow-motion,
-  `G` instant flip recharge, `$` score.
+  `G` instant flip recharge, `$` score, `U` magnet.
+
+## Modes, records and the editor
+
+* **Classic:** the original run.
+* **Daily challenge** (`C`): the seed comes from today's date (local time), so every player
+  gets the same layouts. It skips the teaching levels and goes straight to procedural ones.
+  The best score is kept per day.
+* **Custom level:** open `index.html#level=g1.…` (the editor makes these links). Clear the
+  level to win the run.
+
+**Records** (`H`) shows the top-10 table (score, level, mode, feel, date), achievements,
+lifetime stats and the skin picker. It's all stored in `localStorage` under one key, and a
+corrupted or older save loads safely rather than crashing.
+
+**The editor** (`editor.html`, or `E` from the title) paints the 12×6 grid with every
+brick type. It has mirror, random and clear tools, flags problems (no bricks, two bosses,
+an odd portal), and has **Play it** and **Copy share link** buttons. A layout packs into
+a 53-character code (4 bits a cell plus a checksum), so links stay short and a tampered
+code is rejected instead of crashing the game.
+
+## Install it / deploy it
+
+* **GitHub Pages:** `.github/workflows/pages.yml` runs the fast tests and publishes the
+  static files on every push to `main`. Turn it on once under *Settings → Pages →
+  Source: GitHub Actions*.
+* **CI:** `.github/workflows/ci.yml` runs the full `npm test` on every push and pull request,
+  and uploads the scenario screenshots as an artifact.
+* **Offline / install:** served over https, the game registers `sw.js`, which precaches
+  every file. Browsers then offer "Install" and the game runs with no network.
+  `tools/pwa-check.mjs` fails the tests if a new file is missing from the precache list.
 * No bottom wall. The floor is a shredder; every ball lost is a life. Extra ball every
   20 000 points.
 
@@ -197,7 +249,9 @@ invent a tuning you like more than the three built-ins, add it to `PRESETS` and
 index.html            markup + fallback text
 src/styles.css        framing only (the canvas does the visuals)
 src/config.js         EVERY tunable number, commented  ← start here
-src/main.js           bootstrap, game loop, post-processing, localStorage
+src/main.js           bootstrap, game loop, post-processing, localStorage, modes
+editor.html           the level editor page (src/editor/)
+sw.js · manifest      offline cache + install metadata
 src/core/
   math.js             easing, seeded RNG, colour math, swept-circle-vs-AABB
   input.js            one model for mouse + touch + keyboard, drag-vs-tap resolution
@@ -206,8 +260,13 @@ src/core/
   audio.js            WebAudio synthesis: instruments, SFX, adaptive music
 src/game/
   world.js            the simulation: ball, collisions, scoring, flips, power-ups, flow
-  level.js            hand-authored + procedural brick layouts, damage, rendering
+  level.js            hand-authored + procedural layouts, portals, ghosts, boss core
+  levelcode.js        share-code codec + layout validation (used by game and editor)
   paddle.js           chase, squash & stretch, aimed reflection
+src/meta/
+  progress.js         high scores, achievements, lifetime stats, skins, daily seeds
+  panels.js           title button bar + Records dialog (HTML, not canvas)
+src/editor/           editor.js + editor.css
 src/render/
   renderer.js         virtual-resolution canvas, glow primitives, CRT post-processing
   bg.js               parallax starfield, grid, gravity telegraphs, shredder pit
@@ -215,6 +274,9 @@ src/render/
 tools/
   serve.mjs           the zero-dependency static server behind `npm start`
   lint.mjs, scenarios.mjs, harness.mjs, canvas-mock.mjs   headless test rig (below)
+  meta-tests.mjs      share codes + progression (pure, instant)
+  gameplay-tests.mjs  portals, ghosts, boss, magnet, daily, custom-win, soak
+  pwa-check.mjs       precache list vs files on disk, manifest
 docs/                 README screenshots (generated from the headless rig)
 ```
 
@@ -239,6 +301,8 @@ game's draw calls in JavaScript and writes PNGs. That makes the real game runnab
 
 ```
 node tools/lint.mjs              # parse every module
+node tools/meta-tests.mjs        # share codes + progression
+node tools/gameplay-tests.mjs    # the 1.1 mechanics + a 60 s boss-level soak
 node tools/scenarios.mjs         # 84 assertions + 22 screenshots in out/scenarios/
 node tools/harness.mjs --seconds 150   # autopilot plays the game, screenshots key moments
 ```

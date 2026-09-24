@@ -26,6 +26,10 @@ export class Input {
     this.debug = false;
     this.toggleShake = false;
     this.cyclePreset = false;    // F3: rotate the feel preset
+    this.daily = false;          // C: start today's daily challenge (title only)
+    this.records = false;        // H: records / achievements / skins panel
+    this.editor = false;         // E: open the level editor
+    this.cycleSkin = false;      // K: next unlocked paddle skin
 
     this.axis = 0;        // -1..1 keyboard steering
     this.keys = new Set();
@@ -135,6 +139,10 @@ export class Input {
         // F3 is the browser's "find again" in most engines, so it needs the
         // preventDefault or cycling presets opens a search bar over the game.
         case 'F3': this.cyclePreset = true; e.preventDefault(); break;
+        case 'KeyC': this.daily = true; break;
+        case 'KeyH': this.records = true; break;
+        case 'KeyE': this.editor = true; break;
+        case 'KeyK': this.cycleSkin = true; break;
         case 'ArrowLeft': case 'KeyA': case 'ArrowRight': case 'KeyD': e.preventDefault(); break;
       }
       if (e.code === 'Space') e.preventDefault();
@@ -167,5 +175,9 @@ export class Input {
     this.debug = false;
     this.toggleShake = false;
     this.cyclePreset = false;
+    this.daily = false;
+    this.records = false;
+    this.editor = false;
+    this.cycleSkin = false;
   }
 }

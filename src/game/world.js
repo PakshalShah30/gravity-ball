@@ -16,7 +16,7 @@ import {
   BALL, PADDLE, FIELD, FLIP, COMBO, SCORING, DROPS, LIVES_START, TIMING,
   JUICE, COLORS,
 } from '../config.js';
-import { Level, KIND } from './level.js';
+import { Level, KIND, isBossLevel } from './level.js';
 import { Paddle } from './paddle.js';
 
 export const STATE = {
@@ -28,11 +28,16 @@ export const STATE = {
   GAME_OVER: 'gameover',
 };
 
-const DROP_LABEL = { wide: 'W', multi: 'M', slow: 'S', grav: 'G', points: '$' };
-const DROP_COLOR = { wide: '#3dffb0', multi: '#ffc843', slow: '#5aa8ff', grav: '#a06bff', points: '#ff5ec4' };
+const DROP_LABEL = { wide: 'W', multi: 'M', slow: 'S', grav: 'G', points: '$', magnet: 'U' };
+const DROP_COLOR = { wide: '#3dffb0', multi: '#ffc843', slow: '#5aa8ff', grav: '#a06bff', points: '#ff5ec4', magnet: '#ff6b8b' };
 export const DROP_INFO = { DROP_LABEL, DROP_COLOR };
 
 const TRAIL_N = 26;
+
+const KIND_SCORE = {
+  [KIND.NORMAL]: 'basic', [KIND.ARMORED]: 'armored', [KIND.BOMB]: 'bomb', [KIND.SHIELD]: 'shield',
+  [KIND.PORTAL]: 'portal', [KIND.GHOST]: 'ghost', [KIND.BOSS]: 'boss',
+};
 
 class Ball {
   constructor() {
@@ -107,7 +112,15 @@ export class World {
 
     this.flip = { active: false, t: 0, charge: 1, accel: 0, buff: 0 };
     this.gravity = BALL.gravity;
-    this.buffs = { wide: 0, slow: 0 };
+    this.buffs = { wide: 0, slow: 0, magnet: 0 };
+    // Run mode: 'classic' | 'daily' | 'custom'. Daily + custom are set by main.js.
+    this.mode = 'classic';
+    this.customLayout = null;
+    this.won = false;
+    this.livesLostThisLevel = 0;
+    this.portalsUsed = 0;
+    this.bossesBeaten = 0;
+    this.maxBalls = 1;
     this.pendingBlasts = [];
     this.drops = [];
     this.popups = [];
@@ -166,7 +179,20 @@ export class World {
     this.pendingBlasts.length = 0;
   }
 
-  startRun(seed = (Math.random() * 1e9) | 0) {
+  /**
+   * Start a run. `opts.mode` picks the ruleset:
+   *   classic — hand-built levels 1-5, then procedural (the original game)
+   *   daily   — everyone gets the same seed today; procedural from level 1
+   *   custom  — one level from the editor (`opts.layout`); clearing it wins
+   */
+  startRun(seed = (Math.random() * 1e9) | 0, opts = {}) {
+    this.mode = opts.mode ?? this.mode ?? 'classic';
+    if (opts.layout) this.customLayout = opts.layout;
+    if (this.mode === 'custom' && !this.customLayout) this.mode = 'classic';
+    this.won = false;
+    this.portalsUsed = 0;
+    this.bossesBeaten = 0;
+    this.maxBalls = 1;
     this.seed = seed;
     this.rng = makeRng(seed);
     this.score = 0;
@@ -182,6 +208,7 @@ export class World {
     this.runTime = 0;
     this.buffs.wide = 0;
     this.buffs.slow = 0;
+    this.buffs.magnet = 0;
     this.flip.charge = 1;
     this.flip.buff = 0;
     this.flip.active = false;
@@ -189,13 +216,14 @@ export class World {
     this.startLevel(1);
     this.audio?.setLevel(1);
     this.audio?.setIntensity(0);
-    this._emit('runStart');
+    this._emit('runStart', this.mode);
   }
 
   startLevel(index) {
     this.levelIndex = index;
-    this.level.build(index, this.seed);
+    this.level.build(index, this.seed, this._levelOpts());
     this.level.startIntro();
+    this.livesLostThisLevel = 0;
     this.gravity = BALL.gravity + (index - 1) * BALL.gravityPerLevel;
     this.balls.length = 0;
     this.main = this._newBall();
@@ -207,20 +235,35 @@ export class World {
     this._emit('levelStart', index);
   }
 
+  _levelOpts() {
+    if (this.mode === 'custom') return { layout: this.customLayout };
+    if (this.mode === 'daily') return { procedural: true };
+    return {};
+  }
+
+  get isBossLevel() { return this.mode === 'classic' && isBossLevel(this.levelIndex); }
+
   _setState(s) {
     this.state = s;
     this.stateT = 0;
   }
 
   nextLevel() {
-    const bonus = SCORING.levelClear + this.lives * SCORING.lifeBonus
+    const bonus = SCORING.levelClear + this.lives * SCORING.lifeBonus + (this.level.bossDown ? 2500 : 0)
       + (this.flipReady ? SCORING.flipBonus : 0);
     this.addScore(bonus, FIELD.x + FIELD.w / 2, FIELD.y + 260, `LEVEL CLEAR +${bonus}`, COLORS.gold, 26);
+    if (this.mode === 'custom') {
+      // A custom level is a one-level challenge: clearing it is a win.
+      this.won = true;
+      this._endRun();
+      return;
+    }
     this.startLevel(this.levelIndex + 1);
   }
 
   loseLife() {
     this.lives--;
+    this.livesLostThisLevel++;
     this.audio?.life();
     this.fx.shake(JUICE.shakeLife);
     this.fx.flashScreen(COLORS.danger, 0.45);
@@ -228,16 +271,22 @@ export class World {
     this.fx.slowmo(0.35, 0.7);
     this._emit('lifeLost', this.lives);
     if (this.lives <= 0) {
-      this.runStats = {
-        score: this.score, level: this.levelIndex, bricks: this.bricksBroken,
-        multiplier: this.bestMultiplier, time: this.runTime, flips: this.flipsUsed,
-      };
-      this._setState(STATE.GAME_OVER);
-      this.audio?.gameOver();
-      this._emit('gameOver', this.runStats);
+      this._endRun();
     } else {
       this._setState(STATE.DYING);
     }
+  }
+
+  _endRun() {
+    this.runStats = {
+      score: this.score, level: this.levelIndex, bricks: this.bricksBroken,
+      multiplier: this.bestMultiplier, time: this.runTime, flips: this.flipsUsed,
+      mode: this.mode, seed: this.seed, won: this.won,
+      portals: this.portalsUsed, bosses: this.bossesBeaten, maxBalls: this.maxBalls,
+    };
+    this._setState(STATE.GAME_OVER);
+    if (this.won) this.audio?.clear(); else this.audio?.gameOver();
+    this._emit('gameOver', this.runStats);
   }
 
   // ================================================================= input ===
@@ -245,11 +294,11 @@ export class World {
   /** The single context-sensitive action: launch / flip / retry. */
   primaryAction() {
     switch (this.state) {
-      case STATE.MENU: this.audio?.unlock(); this.startRun(); break;
+      case STATE.MENU: this.audio?.unlock(); this.startRun(undefined, { mode: this._menuMode ?? 'classic' }); break;
       case STATE.READY: this.launch(); break;
       case STATE.PLAY: this.activateFlip(); break;
       case STATE.GAME_OVER:
-        if (this.stateT > 0.9) this.startRun();
+        if (this.stateT > 0.9) this.startRun(this.mode === 'daily' ? this.seed : undefined);
         break;
       case STATE.CLEAR: break;
       default: break;
@@ -409,6 +458,7 @@ export class World {
       this.buffs.wide -= dt;
       if (this.buffs.wide <= 0) { this.paddle.resize('normal'); this._popup(this.paddle.x, this.paddle.y - 40, 'NARROW', COLORS.dim, 16, 0.8); }
     }
+    if (this.buffs.magnet > 0) this.buffs.magnet = Math.max(0, this.buffs.magnet - dt);
     if (this.buffs.slow > 0) {
       this.buffs.slow -= dt;
       if (this.buffs.slow <= 0) this._scaleSpeeds(1 / 0.72);
@@ -486,6 +536,17 @@ export class World {
     while (remaining > 1e-6 && guard++ < 6 && !b.dead) {
       const h = Math.min(remaining, 1 / 90);
       b.vy += this.gravity * h;
+      // Magnet: a falling ball in the lower half is tugged sideways towards the
+      // paddle. Horizontal only, so it helps aim without changing the arc.
+      if (this.buffs.magnet > 0 && b.vy > 0 && b.y > FIELD.y + FIELD.h * 0.45) {
+        const dxp = this.paddle.x - b.x;
+        b.vx += clamp(dxp * 8, -DROPS.magnetPull, DROPS.magnetPull) * h;
+      }
+      // (bug fix) the flip's upward yank integrates between collisions, and on
+      // late levels it pushed the ball past speedMax (~2000 px/s measured) —
+      // the one number the CCD relies on. Hard-cap it every substep.
+      const sp0 = Math.hypot(b.vx, b.vy);
+      if (sp0 > BALL.speedMax) { b.vx *= BALL.speedMax / sp0; b.vy *= BALL.speedMax / sp0; }
       const dx = b.vx * h, dy = b.vy * h;
       const speed = Math.hypot(b.vx, b.vy);
 
@@ -531,6 +592,7 @@ export class World {
         b.x += nx * 0.4; b.y += ny * 0.4;
         this._hitBrick(brick, b, nx, ny, speed);
         this._bumpBall(b, BALL.bumpPerHit);
+        if (brick.kind === KIND.PORTAL) this._teleport(b, brick, nx, ny);
       } else if (kind === 'paddle') {
         const res = this.paddle.reflect(b);
         this.paddle.onHit(clamp(speed / this.ballSpeed(), 0.5, 2));
@@ -571,6 +633,36 @@ export class World {
         this.particles.burst(b.x, b.y, { count: 8, speed: [30, 120], color: COLORS.accent, life: 0.3, size: 2, glow: 1 });
       }
     }
+  }
+
+  /**
+   * Portal: the ball has already bounced off `brick`; move it to the same face
+   * of the partner so it leaves the other portal as if it bounced there. The
+   * exit point is checked against walls and other bricks, and if it is not
+   * clear the teleport is skipped (a plain bounce is always safe).
+   */
+  _teleport(b, brick, nx, ny) {
+    const p = brick.partner;
+    if (!p || !p.alive || !brick.alive && !p.alive) return false;
+    const ex = p.x + p.w / 2 + nx * (p.w / 2 + b.r + 1.5);
+    const ey = p.y + p.h / 2 + ny * (p.h / 2 + b.r + 1.5);
+    if (ex - b.r < FIELD.x || ex + b.r > FIELD.x + FIELD.w || ey - b.r < FIELD.y || ey + b.r > FIELD.bottom) return false;
+    const blockers = this.level.collectSwept(ex - b.r, ey - b.r, ex + b.r, ey + b.r, []);
+    for (const o of blockers) {
+      if (o === p) continue;
+      if (ex + b.r > o.x && ex - b.r < o.x + o.w && ey + b.r > o.y && ey - b.r < o.y + o.h) return false;
+    }
+    const color = COLORS.portal[(brick.pair ?? 0) % COLORS.portal.length];
+    this.particles.ring(b.x, b.y, color, 4, 60, 0.3, 3, 0.9);
+    b.x = ex; b.y = ey;
+    b.trailLen = 0;
+    this.particles.ring(ex, ey, color, 4, 70, 0.35, 3, 0.9);
+    this.particles.burst(ex, ey, { count: 14, speed: [80, 300], color, life: 0.35, size: 2.4, glow: 1 });
+    this.fx.addGlow(ex, ey, 60, color, 0.9);
+    this.audio?.powerup('grav', (ex - FIELD.x) / FIELD.w * 2 - 1);
+    this.portalsUsed++;
+    this._emit('portal');
+    return true;
   }
 
   _clampSpeed(b) {
@@ -639,14 +731,15 @@ export class World {
     const cy = ball.y - ny * ball.r * 0.6;
     const dmg = this.flip.active ? FLIP.damage : 1;
 
-    if (brick.kind === KIND.SHIELD && !this.flip.active && dmg < 2) {
+    const guarded = brick.kind === KIND.BOSS && brick.guard > 0;
+    if ((brick.kind === KIND.SHIELD || guarded) && !this.flip.active && dmg < 2) {
       // Bounce off the shield with an annoying metal ping.
       brick.flash = 1; brick.wob = 1;
       this.audio?.shield((ball.x - FIELD.x) / FIELD.w * 2 - 1, 1);
       this.fx.shake(0.14, nx, ny);
       this.particles.burst(cx, cy, { count: 12, speed: [90, 300], color: COLORS.shield, life: 0.35, size: 2.4, glow: 1 });
       this.particles.ring(cx, cy, COLORS.shield, 8, 44, 0.3, 2.5, 0.8);
-      this._popup(cx, cy - 14, 'SHIELD', COLORS.shield, 14, 0.6);
+      this._popup(cx, cy - 14, guarded ? 'GUARDED — FLIP!' : 'SHIELD', COLORS.shield, 14, 0.6);
       ball.squash = 0.4;
       return;
     }
@@ -659,7 +752,12 @@ export class World {
       this.particles.burst(cx, cy, { count: 14, speed: [90, 340], color: brick.color, life: 0.4, size: 3, glow: 0.6 });
       this.particles.shards(cx, cy, brick.w, brick.h, brick.color, 5);
       ball.squash = 0.45;
-      this.addScore(40, cx, cy, null);
+      this.addScore(brick.kind === KIND.BOSS ? SCORING.bossHit * dmg : 40, cx, cy, null);
+      if (brick.kind === KIND.BOSS) {
+        this.fx.shake(0.3, nx, ny);
+        this.fx.addGlow(cx, cy, 90, COLORS.boss, 0.8);
+        this._emit('bossHit', brick.hp / brick.maxHp);
+      }
       return;
     }
 
@@ -676,6 +774,8 @@ export class World {
     const mult = this._chainMultiplier();
     const isNewMultiplier = mult > this.multiplier;
     this.multiplier = mult;
+    // (bug fix) the best chain was never recorded, so GAME OVER always said x1.
+    if (mult > this.bestMultiplier) this.bestMultiplier = mult;
 
     this.audio?.brick(this.chain - 1, pan, brick.kind === KIND.ARMORED ? 'armored' : 'basic');
     if (this.chain > 1 && this.chain % COMBO.perMultiplier === 0) this.audio?.combo(this.chain / COMBO.perMultiplier);
@@ -695,11 +795,13 @@ export class World {
     this.fx.freeze(big ? 0.045 : JUICE.hitstopBrick);
     this.fx.punch(big ? 0.008 : 0.004);
 
-    const base = SCORING.brick[brick.kind === KIND.ARMORED ? 'armored' : brick.kind === KIND.BOMB ? 'bomb' : brick.kind === KIND.SHIELD ? 'shield' : 'basic'];
+    const base = SCORING.brick[KIND_SCORE[brick.kind] ?? 'basic'];
+    if (brick.kind === KIND.BOSS) this._bossDown(cx, cy);
     const points = base * this.multiplier;
     this.addScore(points, cx, cy, null);
 
     if (isNewMultiplier) {
+      this._emit('multiplier', mult);
       this._popup(cx, cy - 26, `x${mult}`, COLORS.gold, 26, 1.1);
       this.fx.flashScreen(COLORS.gold, 0.12);
       this.audio?.powerup('points', pan * 0.4);
@@ -715,6 +817,22 @@ export class World {
     } else if (this.rng() < DROPS.chance || brick.kind === KIND.ARMORED && this.rng() < 0.3) {
       this._spawnDrop(cx, cy);
     }
+  }
+
+  _bossDown(x, y) {
+    this.bossesBeaten++;
+    this.fx.shake(1);
+    this.fx.freeze(0.2);
+    this.fx.slowmo(0.4, 1);
+    this.fx.flashScreen('#ffffff', 0.5);
+    this.fx.chroma(1.4);
+    for (let i = 0; i < 4; i++) {
+      this.particles.ring(x, y, i % 2 ? COLORS.boss : COLORS.gold, 20, 260 + i * 120, 0.7 + i * 0.1, 6, 0.9);
+    }
+    this.particles.burst(x, y, { count: 80, speed: [200, 1200], color: COLORS.boss, life: 1, size: 4, glow: 1, drag: 1.5 });
+    this._popup(x, y - 40, 'CORE DESTROYED', COLORS.gold, 34, 1.6);
+    this.audio?.explode(0, 1);
+    this._emit('bossDown');
   }
 
   _explode(x, y, radius) {
@@ -758,12 +876,19 @@ export class World {
       const cx = p.brick.x + p.brick.w / 2, cy = p.brick.y + p.brick.h / 2;
       if (p.brick.kind === KIND.BOMB) {
         this._destroyBrick(p.brick, cx, cy, 0, -1, 600, this.main);
+      } else if (p.brick.kind === KIND.BOSS) {
+        // Explosions chip the boss core instead of deleting it outright.
+        if (p.brick.guard > 0) continue;
+        p.brick.hp -= 3;
+        p.brick.flash = 1;
+        if (p.brick.hp <= 0) this._destroyBrick(p.brick, cx, cy, 0, -1, 600, this.main);
       } else {
         this.level.kill(p.brick, this);
         this.bricksBroken++;
         this.chain++;
         this.chainTimer = COMBO.timeout;
         this.multiplier = this._chainMultiplier();
+        if (this.multiplier > this.bestMultiplier) this.bestMultiplier = this.multiplier;
         this.particles.shards(cx, cy, p.brick.w, p.brick.h, p.brick.color, 8);
         this.particles.burst(cx, cy, { count: 12, speed: [120, 420], color: COLORS.bombCore, life: 0.45, size: 3, glow: 1 });
         this.addScore(SCORING.brick.basic * this.multiplier, cx, cy, null);
@@ -873,6 +998,7 @@ export class World {
           if (Math.hypot(nb.vx, nb.vy) < 1) { nb.vx = Math.cos(a) * speed; nb.vy = -Math.abs(Math.sin(a) * speed); }
           this.balls.push(nb);
         }
+        this.maxBalls = Math.max(this.maxBalls, this.balls.length);
         this._popup(d.x, d.y - 20, 'MULTIBALL', DROP_COLOR.multi, 20, 1.1);
         break;
       }
@@ -880,6 +1006,10 @@ export class World {
         this._scaleSpeeds(0.72);
         this.buffs.slow = DROPS.duration.slow;
         this._popup(d.x, d.y - 20, 'SLOW MOTION', DROP_COLOR.slow, 18, 1.1);
+        break;
+      case 'magnet':
+        this.buffs.magnet = DROPS.duration.magnet;
+        this._popup(d.x, d.y - 20, 'MAGNET', DROP_COLOR.magnet, 18, 1.1);
         break;
       case 'grav':
         this.flip.charge = 1;
@@ -921,7 +1051,7 @@ export class World {
     this.fx.freeze(JUICE.hitstopLevel);
     this.fx.slowmo(0.55, 0.8);
     this.fx.flashScreen('#ffffff', 0.3);
-    this._emit('levelClear', this.levelIndex);
+    this._emit('levelClear', { level: this.levelIndex, flawless: this.livesLostThisLevel === 0, time: this.stateT });
     // Fireworks from each row of the arena.
     for (let i = 0; i < 6; i++) {
       const x = FIELD.x + 80 + this.rng() * (FIELD.w - 160);
@@ -939,6 +1069,16 @@ export class World {
   }
 
   _emit(name, data) { if (this.onEvent) this.onEvent(name, data); }
+
+  /** The current run in the same shape as runStats (for live achievements). */
+  runSnapshot() {
+    return {
+      score: this.score, level: this.levelIndex, bricks: this.bricksBroken,
+      multiplier: Math.max(this.bestMultiplier, this.multiplier), time: this.runTime, flips: this.flipsUsed,
+      mode: this.mode, seed: this.seed, won: this.won,
+      portals: this.portalsUsed, bosses: this.bossesBeaten, maxBalls: this.maxBalls,
+    };
+  }
 
   // =================================================================== draw ===
 
@@ -965,6 +1105,16 @@ export class World {
     for (const b of this.balls) {
       if (b.dead) continue;
       drawBall(r, b, t, this.flip.active);
+    }
+
+    // --- magnet field hint ------------------------------------------------
+    if (this.buffs.magnet > 0 && this.state === STATE.PLAY) {
+      const a = 0.12 + 0.08 * Math.sin(t * 10);
+      const y0 = FIELD.y + FIELD.h * 0.45;
+      for (let i = 0; i < 5; i++) {
+        const yy = y0 + ((t * 120 + i * 50) % (this.paddle.y - y0));
+        r.line(this.paddle.x - 60 - i * 10, yy, this.paddle.x + 60 + i * 10, yy, { color: rgba(COLORS.magnet, a), lw: 1.5 });
+      }
     }
 
     // --- paddle --------------------------------------------------------

@@ -17,6 +17,9 @@ import { GameAudio } from './core/audio.js';
 import { Input } from './core/input.js';
 import { World, STATE } from './game/world.js';
 import { makeRng } from './core/math.js';
+import { Progress, dailySeed, dayKey } from './meta/progress.js';
+import { Panels } from './meta/panels.js';
+import { layoutFromHash } from './game/levelcode.js';
 import {
   VIEW, FIELD, TIMING, JUICE, COLORS,
   PRESETS, applyPreset, activePresetName, nextPresetName, isPreset,
@@ -104,8 +107,82 @@ renderer.scanlinesOn = settings.scanlines;
 audio.muted = settings.muted;
 hud.best = best;
 
+// ------------------------------------------------------------- progression ---
+const progress = new Progress(store);
+world.paddle.skin = progress.skin;
+// The old single "best" value predates the table; keep whichever is higher.
+best = Math.max(best, progress.scores[0]?.score ?? 0);
+hud.best = best;
+
+const panels = new Panels({
+  progress,
+  onDaily: () => startDaily(),
+  onEditor: () => openEditor(),
+  onSkin: (id) => { world.paddle.skin = progress.setSkin(id); },
+  onClose: () => {},
+});
+
+function startDaily() {
+  if (panels.isOpen) panels.close();
+  world.paused = false;
+  audio.unlock();
+  world.startRun(dailySeed(), { mode: 'daily' });
+  hud.banner('DAILY CHALLENGE', dayKey(), 1.8, COLORS.gold);
+}
+
+function openEditor() {
+  // Carry a loaded custom level into the editor so "play → tweak → play" works.
+  const m = globalThis.location?.hash?.match(/level=[^&]+/);
+  if (globalThis.location) globalThis.location.href = `editor.html${m ? '#' + m[0] : ''}`;
+}
+
+function celebrate(unlocked) {
+  unlocked.forEach((a, i) => {
+    // Stagger so two unlocks on the same frame are both readable.
+    setTimeoutSafe(() => hud.banner('ACHIEVEMENT', a.name.toUpperCase(), 2, COLORS.gold), i * 900);
+  });
+  const skins = Progress.skinsFor(unlocked.map((a) => a.id));
+  for (const s of skins) setTimeoutSafe(() => hud.banner('SKIN UNLOCKED', `${s.name.toUpperCase()} · H TO EQUIP`, 2, COLORS.accent), (unlocked.length) * 900);
+  if (unlocked.length) audio.extraLife?.();
+}
+
+function setTimeoutSafe(fn, ms) {
+  if (!ms) return fn();
+  if (typeof globalThis.setTimeout === 'function') globalThis.setTimeout(fn, ms); else fn();
+}
+
+// Custom level from a share link: index.html#level=g1.xxxx
+const sharedLayout = layoutFromHash(globalThis.location?.hash);
+if (sharedLayout) {
+  world.customLayout = sharedLayout;
+  world._menuMode = 'custom';
+  hud.menuNote = 'CUSTOM LEVEL LOADED — CLICK TO PLAY  ·  E  EDIT IT';
+} else if (/daily/.test(globalThis.location?.hash ?? '')) {
+  world._menuMode = 'daily';
+  hud.menuNote = 'DAILY CHALLENGE — CLICK TO PLAY';
+}
+
+const LIVE_EVENTS = new Set(['multiplier', 'levelClear', 'powerup', 'portal', 'bossDown', 'runStart']);
+
 world.onEvent = (name, data) => {
+  if (LIVE_EVENTS.has(name) || name === 'gameOver') {
+    const run = name === 'gameOver'
+      ? { ...data, preset: activePresetName(), dayKey: dayKey() }
+      : world.runSnapshot();
+    const res = progress.onEvent(name, name === 'gameOver' ? run : data, run);
+    if (res.unlocked?.length) celebrate(res.unlocked);
+    if (name === 'gameOver') {
+      const notes = [];
+      if (res.rank === 0) notes.push('NEW #1 HIGH SCORE');
+      else if (res.rank > 0) notes.push(`#${res.rank + 1} ON YOUR HIGH SCORES`);
+      if (res.dailyBest) notes.push("TODAY'S DAILY BEST");
+      hud.runNote = notes.join('  ·  ');
+    }
+  }
   switch (name) {
+    case 'runStart':
+      hud.runNote = '';
+      break;
     case 'gameOver':
       if (data.score > best) {
         best = data.score;
@@ -113,6 +190,9 @@ world.onEvent = (name, data) => {
         store.write('gb.best', best);
         hud.banner('NEW BEST!', `${best.toLocaleString('en-US')} POINTS`, 2.2, COLORS.gold);
       }
+      break;
+    case 'bossDown':
+      hud.banner('BOSS DOWN', '+2,500 CLEAR BONUS', 2, COLORS.boss);
       break;
     case 'extraLife':
       hud.banner('EXTRA BALL', '+1 LIFE', 1.8, COLORS.gold);
@@ -165,12 +245,32 @@ function frame() {
     world.paused = !world.paused;
     world.paused ? audio.duck(0.7, 0.2) : audio.duck(0, 0.2);
   }
+  if (input.pause && world.state === STATE.GAME_OVER) {
+    world.toMenu();
+    world.mode = world._menuMode ?? 'classic';
+  }
   if (input.restart && world.state !== STATE.MENU) {
     world.paused = false;
-    world.startRun();
+    world.startRun(world.mode === 'daily' ? world.seed : undefined);
     world.state = STATE.READY;
   }
   if (input.cyclePreset) cyclePreset(1);
+  const onTitle = world.state === STATE.MENU || world.state === STATE.GAME_OVER;
+  if (input.records && onTitle) panels.toggle();
+  if (input.daily && onTitle) startDaily();
+  if (input.editor && onTitle) openEditor();
+  if (input.cycleSkin) {
+    world.paddle.skin = progress.cycleSkin(1);
+    hud.banner(`SKIN · ${world.paddle.skin.name.toUpperCase()}`, 'K TO CHANGE', 1.1, COLORS.accent);
+  }
+  // The title's "click to start" honours the selected mode (daily needs its seed).
+  if (input.primary && world.state === STATE.MENU && world._menuMode === 'daily' && !panels.isOpen) {
+    input.primary = false;
+    startDaily();
+  }
+  // While the records dialog is open the game underneath ignores actions.
+  if (panels.isOpen) { input.primary = false; input.gravityButton = false; }
+  panels.setState(world.state);
   if (input.debug) debug = !debug;
 
   const dtV = real * fx.simScale;
@@ -210,6 +310,17 @@ function frame() {
   if (fpsAcc > 0.5) { fps = frames / fpsAcc; frames = 0; fpsAcc = 0; }
 
   requestAnimationFrame(frame);
+
+// ------------------------------------------------------------------ offline ---
+// Installable + playable offline once loaded. Only over http(s): a service
+// worker cannot register from file:// and the test harness has no navigator.
+try {
+  const nav = globalThis.navigator;
+  if (nav?.serviceWorker && /^https?:$/.test(globalThis.location?.protocol ?? '')
+      && !/^(localhost|127\.0\.0\.1)$/.test(globalThis.location.hostname)) {
+    nav.serviceWorker.register('sw.js').catch(() => {});
+  }
+} catch { /* no service worker support */ }
 }
 
 let debug = false;
@@ -306,7 +417,21 @@ globalThis.GRAVITY_BALL = {
     return name;
   },
   cyclePreset,
+  progress,
+  panels,
+  startDaily,
   stop() { running = false; },
 };
 
 requestAnimationFrame(frame);
+
+// ------------------------------------------------------------------ offline ---
+// Installable + playable offline once loaded. Only over http(s): a service
+// worker cannot register from file:// and the test harness has no navigator.
+try {
+  const nav = globalThis.navigator;
+  if (nav?.serviceWorker && /^https?:$/.test(globalThis.location?.protocol ?? '')
+      && !/^(localhost|127\.0\.0\.1)$/.test(globalThis.location.hostname)) {
+    nav.serviceWorker.register('sw.js').catch(() => {});
+  }
+} catch { /* no service worker support */ }

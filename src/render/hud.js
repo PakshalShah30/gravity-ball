@@ -12,7 +12,8 @@ import {
   PRESETS, PRESET_ORDER, activePresetName,
 } from '../config.js';
 
-const DROP_LABEL_UI = { wide: 'WIDE', multi: 'MULTI', slow: 'SLOW', grav: 'FLIP+' };
+const DROP_LABEL_UI = { wide: 'WIDE', multi: 'MULTI', slow: 'SLOW', grav: 'FLIP+', magnet: 'MAGNET' };
+const PILL_COLOR = { wide: '#3dffb0', slow: '#5aa8ff', magnet: '#ff6b8b' };
 
 export class Hud {
   constructor() {
@@ -29,6 +30,8 @@ export class Hud {
     this.best = 0;
     this.newBest = false;
     this.helpT = 0;
+    this.runNote = '';    // game-over line: leaderboard rank, daily best
+    this.menuNote = '';   // title line override (e.g. "CUSTOM LEVEL LOADED")
   }
 
   banner(text, sub = '', time = 1.6, color = COLORS.text) {
@@ -100,7 +103,8 @@ export class Hud {
       });
       return;
     }
-    r.text(`LEVEL ${world.levelIndex}`, cx, 24, {
+    const modeTag = world.mode === 'daily' ? 'DAILY · ' : world.mode === 'custom' ? 'CUSTOM · ' : '';
+    r.text(`${modeTag}LEVEL ${world.levelIndex}`, cx, 24, {
       size: 15, weight: 800, color: COLORS.text, align: 'center', tracking: 5,
     });
     const total = Math.max(1, world.level.total);
@@ -175,8 +179,9 @@ export class Hud {
     const pills = [];
     if (world.buffs.wide > 0) pills.push(['wide', world.buffs.wide / 14]);
     if (world.buffs.slow > 0) pills.push(['slow', world.buffs.slow / 7]);
-    for (const [kind, k] of pills) {
-      const color = kind === 'wide' ? '#3dffb0' : '#5aa8ff';
+    if (world.buffs.magnet > 0) pills.push(['magnet', world.buffs.magnet / 10]);
+    for (const [kind, k] of pills.slice(0, 2)) {
+      const color = PILL_COLOR[kind];
       r.rect(px, y0 + 24, 104, 20, { fill: 'rgba(255,255,255,0.07)', radius: 6 });
       r.rect(px, y0 + 24, Math.max(3, 104 * clamp(k, 0, 1)), 20, { fill: rgba(color, 0.35), radius: 6 });
       r.text(DROP_LABEL_UI[kind], px + 8, y0 + 34, { size: 11, weight: 900, color, baseline: 'middle', tracking: 1 });
@@ -353,13 +358,16 @@ export class Hud {
       ['FLIP GRAVITY', 'space · click · tap (double damage!)'],
       ['GOAL', 'clear every brick — chain hits for x16 score'],
     ];
-    let y = 528;
+    let y = 516;
     for (const [k, v] of lines) {
       r.text(k, cx - 130, y, { size: 12, weight: 900, color: COLORS.accent, align: 'right', tracking: 2 });
       r.text(v, cx - 108, y, { size: 12, weight: 600, color: rgba(COLORS.text, 0.85), tracking: 1 });
-      y += 26;
+      y += 22;
     }
     this._presetRow(r, cx, 610, t);
+    r.text(this.menuNote || 'C  DAILY CHALLENGE   ·   H  RECORDS & SKINS   ·   E  LEVEL EDITOR   ·   K  SKIN', cx, 586, {
+      size: 10, weight: 800, color: rgba(COLORS.text, 0.6), align: 'center', tracking: 2,
+    });
     r.text(`BEST  ${Math.max(this.best, world.score).toLocaleString('en-US')}`, cx, 644, {
       size: 14, weight: 800, color: COLORS.gold, align: 'center', tracking: 4, alpha: 0.9,
     });
@@ -414,7 +422,10 @@ export class Hud {
       color: '#ffffff', alpha: k, tracking: 6,
       glow: true, glowColor: COLORS.accent, glowWidth: 26, glowAmt: 1,
     });
-    const hint = world.levelIndex === 1
+    const hint = world.isBossLevel
+      ? 'BOSS CORE — FLIP WHEN IT GUARDS'
+      : world.mode === 'custom' ? 'CUSTOM LEVEL — CLEAR IT TO WIN'
+      : world.levelIndex === 1
       ? 'BREAK EVERY BRICK'
       : world.levelIndex % 3 === 0 ? 'BOMBS CHAIN — USE THEM' : 'ANTI-GRAVITY DEALS DOUBLE DAMAGE';
     r.text(hint, cx, FIELD.y + 190, {
@@ -461,11 +472,19 @@ export class Hud {
     const k = clamp(world.stateT / 0.6, 0, 1);
     this._veil(r, 0.7 * k);
     const cx = VIEW.w / 2;
-    r.text('GAME OVER', cx, FIELD.y + 190, {
+    const won = world.runStats?.won;
+    r.text(won ? 'YOU WIN' : 'GAME OVER', cx, FIELD.y + 170, {
       size: 58, weight: 900, align: 'center', baseline: 'middle',
       color: '#ffffff', alpha: k, tracking: 8,
-      glow: true, glowColor: COLORS.danger, glowWidth: 30, glowAmt: 1,
+      glow: true, glowColor: won ? COLORS.gold : COLORS.danger, glowWidth: 30, glowAmt: 1,
     });
+    // Leaderboard placement + unlocks, filled in by main.js from progress.js.
+    const note = this.runNote;
+    if (note) {
+      r.text(note, cx, FIELD.y + 214, {
+        size: 14, weight: 800, color: COLORS.gold, align: 'center', alpha: k, tracking: 3,
+      });
+    }
     const st = world.runStats ?? { score: world.score, level: world.levelIndex, bricks: world.bricksBroken, multiplier: world.bestMultiplier, time: world.runTime, flips: world.flipsUsed };
     const rows = [
       ['SCORE', st.score.toLocaleString('en-US')],
@@ -490,7 +509,7 @@ export class Hud {
         size: 22, weight: 900, align: 'center', color: mixHex(COLORS.text, COLORS.accent, pulse),
         tracking: 3, glow: true, glowColor: COLORS.accent, glowWidth: 10 + pulse * 10,
       });
-      r.text('R = NEW RUN    ·    ESC = PAUSE', cx, FIELD.y + 534, {
+      r.text('R = NEW RUN    ·    ESC = TITLE    ·    H = RECORDS', cx, FIELD.y + 534, {
         size: 11, weight: 700, color: COLORS.dim, align: 'center', tracking: 2,
       });
     }
